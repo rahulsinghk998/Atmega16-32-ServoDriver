@@ -268,22 +268,22 @@ ISR(TIMER1_CAPT_vect)
 		PORTB=0xff;
 		ICR1=ICR1_BASE_VALUE+(tempServoHead->angle)*FACTOR;			//struct 0 angle
 	}
+	clearbit(PORTB,tempServoHead->number);
 	while((tempServoHead->number==tempServoHead->node->number) && count <=7){
 		clearbit(PORTB,tempServoHead->number);
 		tempServoHead=tempServoHead->node;
 		count++;	
 	}
-	if((1<=count)&&(count<=7)){
-		clearbit(PORTB,tempServoHead->number);					//angle [i-1]
+	if((1<=count)&&(count<=7)){								//angle [i-1]
 		ICR1=(tempServoHead->node->angle-tempServoHead->angle)*FACTOR;
 		tempServoHead=tempServoHead->node;
 	}
 	if(count>7){
-		clearbit(PORTB,tempServoHead->number);
 		ICR1=ICR1_TOP_VALUE-ICR1_BASE_VALUE-(tempServoHead->angle)*FACTOR;
 		tempServoHead=*servoSwitchHeadPtr;
 		count=-1;
 	}
+	while(
 	count++;
 	TCNT1=0;
 }
