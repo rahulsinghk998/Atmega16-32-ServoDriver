@@ -15,7 +15,7 @@
 #define UBRR_VAL		103
 #define END_OF_SIGNAL		13						//ENTER KEY
 
-#define ICR_VAL 		1100
+//#define ICR_VAL 		1100
 #define SERVO_NUMBER		8
 #define SERVO_MIN_ANGLE 	0
 
@@ -45,7 +45,6 @@ struct structServo{
 };
 
 typedef struct structServo servoList;
-servoList *servoHead;								//To store the head pointer
 servoList *tempServoHead;
 
 servoList *servoSwitch;
@@ -54,15 +53,16 @@ servoList **servoSwitchPtrDup;
 servoList **servoSwitchPtr;
 
 servoList **servoSwitchListPtr;
-uint16_t servoStartAngle[8]={25,50,75,100,125,150,160,179};
+uint16_t servoStartAngle[8]={20,30,40,50,60,70,80,90};
 
-int flag1=1;
 int count=0;									//Counter for servo timer ISR
-
 char tempData[6]={0,0,0,0,0,0};
 char *tempDataPtr;
 uint16_t baudRate=103;								//=((F_CPU/(16*BAUDRATE))-1);
 int arrangeSignalFlag=0;
+
+//Testing Parameters
+int testcounter=0;
 
 //*****************************************************************************************************//
 //	  				 FUNCTION PROTOTYPES                     		       //
@@ -114,41 +114,41 @@ servoList* ArrangeAngle(servoList *servoAngle,servoList *nodeHead,int num)
 		if(servoAngle->number == nodeHead->number){
 //Check the difference between *servoSwitchPtr=servoNodeHead and servoSwitchPtr=&servoNodeHead;
 //It does not work with servoSwitchPtr=&nodeHead;
-		if(num==1)
-			*servoSwitchPtr=nodeHead;
-		else
-			*servoSwitchPtrDup=nodeHead;
-			nodeHead=servoNode->node;
-			flagNumber=1;
-		}
-		if(servoAngle->angle <= nodeHead->angle){
-			servoAngle->node=nodeHead;
-			nodeHead=servoAngle;
-			servoPreviousNode=servoAngle;
-			flagAngle=1;
-		} 
-		while(servoNode !=NULL){
-			if((servoAngle->angle <= servoNode->angle)&& flagAngle !=1){
-				servoPreviousNode->node=servoAngle;
-				servoAngle->node=servoNode;
-				servoPreviousNode=servoAngle;
-				flagAngle=1;
-			}
-			if((servoAngle->number==servoNode->number)&& flagNumber!=1){
-				if(num==1)
-					*servoSwitchPtr=servoNode;
-				else
-					*servoSwitchPtrDup=servoNode;
-				servoPreviousNode->node=servoNode->node;
+			if(num==1)
+				*servoSwitchPtr=nodeHead;
+			else
+				*servoSwitchPtrDup=nodeHead;
+				nodeHead=servoNode->node;
 				flagNumber=1;
 			}
-			servoPreviousNode=(servoAngle->number==servoNode->number)? servoPreviousNode:servoNode;
-			servoNode=servoNode->node;		
-		}
-		if(flagAngle==0){	
-			servoPreviousNode->node=servoAngle;
-			servoAngle->node=NULL;
-		}
+			if(servoAngle->angle <= nodeHead->angle){
+				servoAngle->node=nodeHead;
+				nodeHead=servoAngle;
+				servoPreviousNode=servoAngle;
+				flagAngle=1;
+			} 
+			while(servoNode !=NULL){
+				if((servoAngle->angle <= servoNode->angle)&& flagAngle !=1){
+					servoPreviousNode->node=servoAngle;
+					servoAngle->node=servoNode;
+					servoPreviousNode=servoAngle;
+					flagAngle=1;
+				}
+				if((servoAngle->number==servoNode->number)&& flagNumber!=1){
+					if(num==1)
+						*servoSwitchPtr=servoNode;
+					else
+						*servoSwitchPtrDup=servoNode;
+					servoPreviousNode->node=servoNode->node;
+					flagNumber=1;
+				}
+				servoPreviousNode=(servoAngle->number==servoNode->number)? servoPreviousNode:servoNode;
+				servoNode=servoNode->node;		
+			}
+			if(flagAngle==0){	
+				servoPreviousNode->node=servoAngle;
+				servoAngle->node=NULL;
+			}
 		return nodeHead;
 	}
 	else{
@@ -196,7 +196,10 @@ servoList* SendList(servoList* head)
 //ALWAYS KEEP A DELAY OF ABOUT 2MS OR 3MS (MINIMUM) BETWEEN THE TRANSMITTION OF 2 CONSECUTIVE DATA//
 int main(void)
 {
-	
+	USARTInit();
+	ServoPortInit();
+	TimerInit();
+
 	servoList *servoNodeHead,*servoNodeHeadDup;
 	servoNodeHead=CreateList();
 	servoNodeHeadDup=CreateList();
@@ -209,31 +212,43 @@ int main(void)
 	servoSwitchPtr=&servoSwitch;
 	servoSwitchPtrDup=&servoSwitchDup;
 	tempDataPtr=tempData;
-	
+
 	clearbit(UCSRA,RXC);
-	USARTInit();
-	ServoPortInit();
-	TimerInit();
+	
+SendList(servoNodeHead);
+SendList(servoNodeHeadDup);
+
 	TCNT1=0;
 	sei();
 	while(1){
 			//Without Delay the below loop is not executing.
-			_delay_us(.001); 
+			_delay_us(1); 
+//SendInteger(TCNT1);	
+//_delay_ms(5000);
+//_delay_ms(5000);
 			if(arrangeSignalFlag==1){
 				PrepareAddToList(tempData);
+				//servoNodeHead=ArrangeAngle(*servoSwitchPtr,servoNodeHead,1);
+				//	servoSwitchListPtr=&servoNodeHead;
 				if(servoSwitchListPtr==&servoNodeHead){
 					servoNodeHeadDup=ArrangeAngle(*servoSwitchPtrDup,servoNodeHeadDup,0);
+					_delay_ms(50);
 					servoSwitchListPtr=&servoNodeHeadDup;
+//_delay_ms(5000);
+//_delay_ms(5000);
 					servoNodeHead=ArrangeAngle(*servoSwitchPtr,servoNodeHead,1);
 				}
 				else{
 					servoNodeHead=ArrangeAngle(*servoSwitchPtr,servoNodeHead,1);
+					_delay_ms(50);
 					servoSwitchListPtr=&servoNodeHead;
+//_delay_ms(5000);
+//_delay_ms(5000);
 					servoNodeHeadDup=ArrangeAngle(*servoSwitchPtrDup,servoNodeHeadDup,0);
 				}
 				tempDataPtr=tempData;
 				arrangeSignalFlag=0;
-				count=0;
+				//count=0;
 			}
 	}
 return 0;
@@ -267,29 +282,36 @@ void ServoPortInit()
 //*****************************************************************************************************//
 ISR(TIMER1_CAPT_vect)
 {
+	//TCNT1=0;
 	if(count==0){
 		PORTB=0xff;
-		ICR1=ICR1_BASE_VALUE+(tempServoHead->angle)*FACTOR;			//struct 0 angle
-	}
-	while(((tempServoHead->number==tempServoHead->node->number)&&count<=7)&&count>=1){
-		clearbit(PORTB,((tempServoHead->number)-1));
-		tempServoHead=tempServoHead->node;
-		count++;
+		ICR1=ICR1_BASE_VALUE+(tempServoHead->angle);				//struct 0 angle
 	}
 	if((1<=count)&&(count<=7)){
 		clearbit(PORTB,	((tempServoHead->number)-1));				//angle [i-1]
-		ICR1=(tempServoHead->node->angle-tempServoHead->angle)*FACTOR;
+		ICR1=(tempServoHead->node->angle-tempServoHead->angle);
 		tempServoHead=tempServoHead->node;
+			while((tempServoHead->number==tempServoHead->node->number)&& count<=7){
+				clearbit(PORTB,((tempServoHead->number)-1));
+				tempServoHead=tempServoHead->node;
+				count++;
+			}
 	}
 	if(count>7){
 		clearbit(PORTB,((tempServoHead->number)-1));
-		ICR1=ICR1_TOP_VALUE-ICR1_BASE_VALUE-(tempServoHead->angle)*FACTOR;
+		ICR1=ICR1_TOP_VALUE-ICR1_BASE_VALUE-(tempServoHead->angle);
 		tempServoHead=*servoSwitchListPtr;
 		count=-1;
+//		testcounter++;
+//		if(testcounter>200){
+//			SendList(*servoSwitchListPtr);
+//			testcounter=0;
+//		}
 	}
 	count++;
 	TCNT1=0;
 }
+
 
 ISR(USART_RXC_vect)
 {

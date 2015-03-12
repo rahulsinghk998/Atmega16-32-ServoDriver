@@ -1,0 +1,1994 @@
+   1               		.file	"led.c"
+   2               	__SP_H__ = 0x3e
+   3               	__SP_L__ = 0x3d
+   4               	__SREG__ = 0x3f
+   5               	__tmp_reg__ = 0
+   6               	__zero_reg__ = 1
+   7               		.text
+   8               	.Ltext0:
+   9               		.cfi_sections	.debug_frame
+  10               	.global	CreateList
+  12               	CreateList:
+  13               	.LFB7:
+  14               		.file 1 "led.c"
+   1:led.c         **** /*
+   2:led.c         ****  * Servo_Driver.c
+   3:led.c         ****  *
+   4:led.c         ****  * Created: 2/22/2015 1:30:51 AM
+   5:led.c         ****  *  Author: RahulSingh
+   6:led.c         ****  */ 
+   7:led.c         **** //*************************************************************************************************
+   8:led.c         **** //						DEFINES						       //
+   9:led.c         **** //*************************************************************************************************
+  10:led.c         **** #define F_CPU 			16000000UL
+  11:led.c         **** #define setbit(x,y) 		x |=(1<<y)
+  12:led.c         **** #define clearbit(x,y)  		x &=~(1<<y)
+  13:led.c         **** #define togglebit(x,y) 		x ^=(1<<y)
+  14:led.c         **** #define BAUDRATE		9600
+  15:led.c         **** #define UBRR_VAL		103
+  16:led.c         **** #define END_OF_SIGNAL		13						//ENTER KEY
+  17:led.c         **** 
+  18:led.c         **** #define ICR_VAL 		1100
+  19:led.c         **** #define SERVO_NUMBER		8
+  20:led.c         **** #define SERVO_MIN_ANGLE 	0
+  21:led.c         **** 
+  22:led.c         **** #define SERVO_MAX_ANGLE 	180
+  23:led.c         **** #define ICR1_BASE_VALUE 	1100						//it is base of minimun high time of pulse typically it is 1.1 m
+  24:led.c         **** #define ICR1_TOP_VALUE		3999						//20 ms PULSE i.e. 50Hz frequency
+  25:led.c         **** #define FACTOR 			22.22						//It is evaluated as 4000/180 degree
+  26:led.c         **** 
+  27:led.c         **** //*************************************************************************************************
+  28:led.c         **** //					  INCLUDED LIBRARRY					       //
+  29:led.c         **** //*************************************************************************************************
+  30:led.c         **** #include <avr/io.h>
+  31:led.c         **** #include <avr/interrupt.h>
+  32:led.c         **** #include <util/delay.h>
+  33:led.c         **** #include <stdio.h>
+  34:led.c         **** #include <stdlib.h> 
+  35:led.c         **** #include <math.h>
+  36:led.c         **** 
+  37:led.c         **** 
+  38:led.c         **** //*************************************************************************************************
+  39:led.c         **** //	   				   GLOBAL VARIBLES					       //
+  40:led.c         **** //*************************************************************************************************
+  41:led.c         **** struct structServo{
+  42:led.c         **** 	uint16_t angle;
+  43:led.c         **** 	uint16_t number;
+  44:led.c         **** 	struct structServo *node;
+  45:led.c         **** };
+  46:led.c         **** 
+  47:led.c         **** typedef struct structServo servoList;
+  48:led.c         **** servoList *servoHead;								//To store the head pointer
+  49:led.c         **** servoList *tempServoHead;
+  50:led.c         **** 
+  51:led.c         **** servoList *servoSwitch;
+  52:led.c         **** servoList *servoSwitchDup;
+  53:led.c         **** servoList **servoSwitchPtrDup;
+  54:led.c         **** servoList **servoSwitchPtr;
+  55:led.c         **** 
+  56:led.c         **** servoList **servoSwitchListPtr;
+  57:led.c         **** uint16_t servoStartAngle[8]={25,50,75,100,125,150,160,179};
+  58:led.c         **** 
+  59:led.c         **** int flag1=1;
+  60:led.c         **** int count=0;									//Counter for servo timer ISR
+  61:led.c         **** 
+  62:led.c         **** char tempData[6]={0,0,0,0,0,0};
+  63:led.c         **** char *tempDataPtr;
+  64:led.c         **** uint16_t baudRate=103;								//=((F_CPU/(16*BAUDRATE))-1);
+  65:led.c         **** int arrangeSignalFlag=0;
+  66:led.c         **** 
+  67:led.c         **** //*************************************************************************************************
+  68:led.c         **** //	  				 FUNCTION PROTOTYPES                     		       //
+  69:led.c         **** //*************************************************************************************************
+  70:led.c         **** void USARTInit();
+  71:led.c         **** servoList* ArrangeAngle(servoList *servoAngle, servoList *servoNodeHead,int num);
+  72:led.c         **** servoList* CreateList();
+  73:led.c         **** void PrepareAddToList(char *start);
+  74:led.c         **** uint16_t StringToInt(char *dataStart);
+  75:led.c         **** void SendInteger(uint16_t num);
+  76:led.c         **** servoList* SendList(servoList* head);
+  77:led.c         **** void ServoPortInit();
+  78:led.c         **** void TimerInit();
+  79:led.c         **** 
+  80:led.c         **** //*************************************************************************************************
+  81:led.c         **** //	      					FUNCTIONS 	   				       //
+  82:led.c         **** //*************************************************************************************************
+  83:led.c         **** 
+  84:led.c         **** servoList* CreateList()
+  85:led.c         **** {
+  15               		.loc 1 85 0
+  16               		.cfi_startproc
+  17 0000 CF92      		push r12
+  18               	.LCFI0:
+  19               		.cfi_def_cfa_offset 3
+  20               		.cfi_offset 12, -2
+  21 0002 DF92      		push r13
+  22               	.LCFI1:
+  23               		.cfi_def_cfa_offset 4
+  24               		.cfi_offset 13, -3
+  25 0004 EF92      		push r14
+  26               	.LCFI2:
+  27               		.cfi_def_cfa_offset 5
+  28               		.cfi_offset 14, -4
+  29 0006 FF92      		push r15
+  30               	.LCFI3:
+  31               		.cfi_def_cfa_offset 6
+  32               		.cfi_offset 15, -5
+  33 0008 0F93      		push r16
+  34               	.LCFI4:
+  35               		.cfi_def_cfa_offset 7
+  36               		.cfi_offset 16, -6
+  37 000a 1F93      		push r17
+  38               	.LCFI5:
+  39               		.cfi_def_cfa_offset 8
+  40               		.cfi_offset 17, -7
+  41 000c CF93      		push r28
+  42               	.LCFI6:
+  43               		.cfi_def_cfa_offset 9
+  44               		.cfi_offset 28, -8
+  45 000e DF93      		push r29
+  46               	.LCFI7:
+  47               		.cfi_def_cfa_offset 10
+  48               		.cfi_offset 29, -9
+  49               	/* prologue: function */
+  50               	/* frame size = 0 */
+  51               	/* stack size = 8 */
+  52               	.L__stack_usage = 8
+  53               	.LVL0:
+  54 0010 80E0      		ldi r24,lo8(servoStartAngle)
+  55 0012 C82E      		mov r12,r24
+  56 0014 80E0      		ldi r24,hi8(servoStartAngle)
+  57 0016 D82E      		mov r13,r24
+  86:led.c         **** 	int i;
+  87:led.c         **** 	servoList *head, *first, *temp = 0;
+  58               		.loc 1 87 0
+  59 0018 E12C      		mov r14,__zero_reg__
+  60 001a F12C      		mov r15,__zero_reg__
+  88:led.c         **** 	first = 0;
+  61               		.loc 1 88 0
+  62 001c 00E0      		ldi r16,0
+  63 001e 10E0      		ldi r17,0
+  89:led.c         **** 	for(i=0; i<8; i++){
+  64               		.loc 1 89 0
+  65 0020 C0E0      		ldi r28,0
+  66 0022 D0E0      		ldi r29,0
+  67               	.LVL1:
+  68               	.L4:
+  90:led.c         **** 		head  = (servoList*)malloc(sizeof(servoList));
+  69               		.loc 1 90 0
+  70 0024 86E0      		ldi r24,lo8(6)
+  71 0026 90E0      		ldi r25,0
+  72 0028 0E94 0000 		call malloc
+  73               	.LVL2:
+  74 002c FC01      		movw r30,r24
+  75               	.LVL3:
+  91:led.c         **** 		head->angle=servoStartAngle[i];
+  76               		.loc 1 91 0
+  77 002e D601      		movw r26,r12
+  78 0030 8D91      		ld r24,X+
+  79 0032 9D91      		ld r25,X+
+  80               	.LVL4:
+  81 0034 6D01      		movw r12,r26
+  82 0036 9183      		std Z+1,r25
+  83 0038 8083      		st Z,r24
+  92:led.c         **** 		head->number=i+1;
+  84               		.loc 1 92 0
+  85 003a 2196      		adiw r28,1
+  86               	.LVL5:
+  87 003c D383      		std Z+3,r29
+  88 003e C283      		std Z+2,r28
+  93:led.c         **** 		if (first != 0){
+  89               		.loc 1 93 0
+  90 0040 0115      		cp r16,__zero_reg__
+  91 0042 1105      		cpc r17,__zero_reg__
+  92 0044 01F0      		breq .L5
+  94:led.c         **** 			temp->node = head;
+  93               		.loc 1 94 0
+  94 0046 D701      		movw r26,r14
+  95 0048 1596      		adiw r26,4+1
+  96 004a FC93      		st X,r31
+  97 004c EE93      		st -X,r30
+  98 004e 1497      		sbiw r26,4
+  99               	.LVL6:
+ 100 0050 00C0      		rjmp .L2
+ 101               	.LVL7:
+ 102               	.L5:
+  90:led.c         **** 		head  = (servoList*)malloc(sizeof(servoList));
+ 103               		.loc 1 90 0
+ 104 0052 8F01      		movw r16,r30
+ 105               	.LVL8:
+ 106               	.L2:
+  89:led.c         **** 	for(i=0; i<8; i++){
+ 107               		.loc 1 89 0 discriminator 1
+ 108 0054 C830      		cpi r28,8
+ 109 0056 D105      		cpc r29,__zero_reg__
+ 110 0058 01F0      		breq .L3
+  90:led.c         **** 		head  = (servoList*)malloc(sizeof(servoList));
+ 111               		.loc 1 90 0
+ 112 005a 7F01      		movw r14,r30
+ 113 005c 00C0      		rjmp .L4
+ 114               	.L3:
+  95:led.c         **** 			temp = head;
+  96:led.c         **** 		}
+  97:led.c         **** 		else
+  98:led.c         **** 		first = temp = head;
+  99:led.c         **** 	}
+ 100:led.c         **** 	temp->node = 0;
+ 115               		.loc 1 100 0
+ 116 005e 1582      		std Z+5,__zero_reg__
+ 117 0060 1482      		std Z+4,__zero_reg__
+ 118               	.LVL9:
+ 101:led.c         **** 	temp = first;
+ 102:led.c         **** 	return first;
+ 103:led.c         **** }
+ 119               		.loc 1 103 0
+ 120 0062 C801      		movw r24,r16
+ 121               	/* epilogue start */
+ 122 0064 DF91      		pop r29
+ 123 0066 CF91      		pop r28
+ 124               	.LVL10:
+ 125 0068 1F91      		pop r17
+ 126 006a 0F91      		pop r16
+ 127               	.LVL11:
+ 128 006c FF90      		pop r15
+ 129 006e EF90      		pop r14
+ 130 0070 DF90      		pop r13
+ 131 0072 CF90      		pop r12
+ 132 0074 0895      		ret
+ 133               		.cfi_endproc
+ 134               	.LFE7:
+ 136               	.global	ArrangeAngle
+ 138               	ArrangeAngle:
+ 139               	.LFB8:
+ 104:led.c         **** 
+ 105:led.c         **** servoList* ArrangeAngle(servoList *servoAngle,servoList *nodeHead,int num)
+ 106:led.c         **** {
+ 140               		.loc 1 106 0
+ 141               		.cfi_startproc
+ 142               	.LVL12:
+ 143 0076 AF92      		push r10
+ 144               	.LCFI8:
+ 145               		.cfi_def_cfa_offset 3
+ 146               		.cfi_offset 10, -2
+ 147 0078 BF92      		push r11
+ 148               	.LCFI9:
+ 149               		.cfi_def_cfa_offset 4
+ 150               		.cfi_offset 11, -3
+ 151 007a CF92      		push r12
+ 152               	.LCFI10:
+ 153               		.cfi_def_cfa_offset 5
+ 154               		.cfi_offset 12, -4
+ 155 007c DF92      		push r13
+ 156               	.LCFI11:
+ 157               		.cfi_def_cfa_offset 6
+ 158               		.cfi_offset 13, -5
+ 159 007e EF92      		push r14
+ 160               	.LCFI12:
+ 161               		.cfi_def_cfa_offset 7
+ 162               		.cfi_offset 14, -6
+ 163 0080 FF92      		push r15
+ 164               	.LCFI13:
+ 165               		.cfi_def_cfa_offset 8
+ 166               		.cfi_offset 15, -7
+ 167 0082 0F93      		push r16
+ 168               	.LCFI14:
+ 169               		.cfi_def_cfa_offset 9
+ 170               		.cfi_offset 16, -8
+ 171 0084 1F93      		push r17
+ 172               	.LCFI15:
+ 173               		.cfi_def_cfa_offset 10
+ 174               		.cfi_offset 17, -9
+ 175 0086 CF93      		push r28
+ 176               	.LCFI16:
+ 177               		.cfi_def_cfa_offset 11
+ 178               		.cfi_offset 28, -10
+ 179 0088 DF93      		push r29
+ 180               	.LCFI17:
+ 181               		.cfi_def_cfa_offset 12
+ 182               		.cfi_offset 29, -11
+ 183               	/* prologue: function */
+ 184               	/* frame size = 0 */
+ 185               	/* stack size = 10 */
+ 186               	.L__stack_usage = 10
+ 187 008a DC01      		movw r26,r24
+ 188 008c FB01      		movw r30,r22
+ 107:led.c         **** 	if(servoAngle->angle<=180 && servoAngle->number<=8){
+ 189               		.loc 1 107 0
+ 190 008e 0D91      		ld r16,X+
+ 191 0090 1C91      		ld r17,X
+ 192 0092 1197      		sbiw r26,1
+ 193 0094 053B      		cpi r16,-75
+ 194 0096 1105      		cpc r17,__zero_reg__
+ 195 0098 00F0      		brlo .+2
+ 196 009a 00C0      		rjmp .L26
+ 197               		.loc 1 107 0 is_stmt 0 discriminator 1
+ 198 009c 1296      		adiw r26,2
+ 199 009e ED90      		ld r14,X+
+ 200 00a0 FC90      		ld r15,X
+ 201 00a2 1397      		sbiw r26,2+1
+ 202 00a4 89E0      		ldi r24,9
+ 203 00a6 E816      		cp r14,r24
+ 204 00a8 F104      		cpc r15,__zero_reg__
+ 205               	.LVL13:
+ 206 00aa 00F0      		brlo .+2
+ 207 00ac 00C0      		rjmp .L26
+ 208               	.LVL14:
+ 209               	.LBB6:
+ 108:led.c         **** 		servoList *servoNode,*servoPreviousNode;
+ 109:led.c         **** 		servoNode = nodeHead;
+ 110:led.c         **** 		servoPreviousNode=nodeHead;							
+ 111:led.c         **** 		int flagAngle=0;
+ 112:led.c         **** 		int flagNumber=0;
+ 113:led.c         **** 
+ 114:led.c         **** 		if(servoAngle->number == nodeHead->number){
+ 210               		.loc 1 114 0 is_stmt 1
+ 211 00ae 8281      		ldd r24,Z+2
+ 212 00b0 9381      		ldd r25,Z+3
+ 213 00b2 E816      		cp r14,r24
+ 214 00b4 F906      		cpc r15,r25
+ 215 00b6 01F4      		brne .L20
+ 115:led.c         **** //Check the difference between *servoSwitchPtr=servoNodeHead and servoSwitchPtr=&servoNodeHead;
+ 116:led.c         **** //It does not work with servoSwitchPtr=&nodeHead;
+ 117:led.c         **** 		if(num==1)
+ 216               		.loc 1 117 0
+ 217 00b8 4130      		cpi r20,1
+ 218 00ba 5105      		cpc r21,__zero_reg__
+ 219 00bc 01F4      		brne .L10
+ 118:led.c         **** 			*servoSwitchPtr=nodeHead;
+ 220               		.loc 1 118 0
+ 221 00be C091 0000 		lds r28,servoSwitchPtr
+ 222 00c2 D091 0000 		lds r29,servoSwitchPtr+1
+ 223 00c6 00C0      		rjmp .L31
+ 224               	.L10:
+ 119:led.c         **** 		else
+ 120:led.c         **** 			*servoSwitchPtrDup=nodeHead;
+ 225               		.loc 1 120 0
+ 226 00c8 C091 0000 		lds r28,servoSwitchPtrDup
+ 227 00cc D091 0000 		lds r29,servoSwitchPtrDup+1
+ 228               	.L31:
+ 229 00d0 F983      		std Y+1,r31
+ 230 00d2 E883      		st Y,r30
+ 121:led.c         **** 			nodeHead=servoNode->node;
+ 231               		.loc 1 121 0
+ 232 00d4 A480      		ldd r10,Z+4
+ 233 00d6 B580      		ldd r11,Z+5
+ 234               	.LVL15:
+ 122:led.c         **** 			flagNumber=1;
+ 235               		.loc 1 122 0
+ 236 00d8 61E0      		ldi r22,lo8(1)
+ 237 00da 70E0      		ldi r23,0
+ 238               	.LVL16:
+ 239 00dc 00C0      		rjmp .L9
+ 240               	.LVL17:
+ 241               	.L20:
+ 242 00de 5B01      		movw r10,r22
+ 112:led.c         **** 		int flagNumber=0;
+ 243               		.loc 1 112 0
+ 244 00e0 60E0      		ldi r22,0
+ 245 00e2 70E0      		ldi r23,0
+ 246               	.LVL18:
+ 247               	.L9:
+ 123:led.c         **** 		}
+ 124:led.c         **** 		if(servoAngle->angle <= nodeHead->angle){
+ 248               		.loc 1 124 0
+ 249 00e4 E501      		movw r28,r10
+ 250 00e6 8881      		ld r24,Y
+ 251 00e8 9981      		ldd r25,Y+1
+ 252 00ea 8017      		cp r24,r16
+ 253 00ec 9107      		cpc r25,r17
+ 254 00ee 00F0      		brlo .L21
+ 125:led.c         **** 			servoAngle->node=nodeHead;
+ 255               		.loc 1 125 0
+ 256 00f0 1596      		adiw r26,4+1
+ 257 00f2 BC92      		st X,r11
+ 258 00f4 AE92      		st -X,r10
+ 259 00f6 1497      		sbiw r26,4
+ 260               	.LVL19:
+ 126:led.c         **** 			nodeHead=servoAngle;
+ 127:led.c         **** 			servoPreviousNode=servoAngle;
+ 261               		.loc 1 127 0
+ 262 00f8 CD01      		movw r24,r26
+ 126:led.c         **** 			nodeHead=servoAngle;
+ 263               		.loc 1 126 0
+ 264 00fa 5D01      		movw r10,r26
+ 128:led.c         **** 			flagAngle=1;
+ 265               		.loc 1 128 0
+ 266 00fc 21E0      		ldi r18,lo8(1)
+ 267 00fe 30E0      		ldi r19,0
+ 268 0100 00C0      		rjmp .L13
+ 269               	.LVL20:
+ 270               	.L21:
+ 110:led.c         **** 		servoPreviousNode=nodeHead;							
+ 271               		.loc 1 110 0
+ 272 0102 CF01      		movw r24,r30
+ 111:led.c         **** 		int flagAngle=0;
+ 273               		.loc 1 111 0
+ 274 0104 20E0      		ldi r18,0
+ 275 0106 30E0      		ldi r19,0
+ 276 0108 00C0      		rjmp .L13
+ 277               	.LVL21:
+ 278               	.L19:
+ 129:led.c         **** 		} 
+ 130:led.c         **** 		while(servoNode !=NULL){
+ 131:led.c         **** 			if((servoAngle->angle <= servoNode->angle)&& flagAngle !=1){
+ 279               		.loc 1 131 0
+ 280 010a C080      		ld r12,Z
+ 281 010c D180      		ldd r13,Z+1
+ 282 010e C016      		cp r12,r16
+ 283 0110 D106      		cpc r13,r17
+ 284 0112 00F4      		brsh .L33
+ 285               	.LVL22:
+ 286               	.L14:
+ 132:led.c         **** 				servoPreviousNode->node=servoAngle;
+ 133:led.c         **** 				servoAngle->node=servoNode;
+ 134:led.c         **** 				servoPreviousNode=servoAngle;
+ 135:led.c         **** 				flagAngle=1;
+ 136:led.c         **** 			}
+ 137:led.c         **** 			if((servoAngle->number==servoNode->number)&& flagNumber!=1){
+ 287               		.loc 1 137 0
+ 288 0114 C280      		ldd r12,Z+2
+ 289 0116 D380      		ldd r13,Z+3
+ 290 0118 EC14      		cp r14,r12
+ 291 011a FD04      		cpc r15,r13
+ 292 011c 01F0      		breq .L34
+ 293 011e CF01      		movw r24,r30
+ 294               	.LVL23:
+ 295               	.L15:
+ 138:led.c         **** 				if(num==1)
+ 139:led.c         **** 					*servoSwitchPtr=servoNode;
+ 140:led.c         **** 				else
+ 141:led.c         **** 					*servoSwitchPtrDup=servoNode;
+ 142:led.c         **** 				servoPreviousNode->node=servoNode->node;
+ 143:led.c         **** 				flagNumber=1;
+ 144:led.c         **** 			}
+ 145:led.c         **** 			servoPreviousNode=(servoAngle->number==servoNode->number)? servoPreviousNode:servoNode;
+ 146:led.c         **** 			servoNode=servoNode->node;		
+ 296               		.loc 1 146 0 discriminator 3
+ 297 0120 0480      		ldd __tmp_reg__,Z+4
+ 298 0122 F581      		ldd r31,Z+5
+ 299 0124 E02D      		mov r30,__tmp_reg__
+ 300               	.LVL24:
+ 301               	.L13:
+ 130:led.c         **** 		while(servoNode !=NULL){
+ 302               		.loc 1 130 0 discriminator 1
+ 303 0126 3097      		sbiw r30,0
+ 304 0128 01F4      		brne .L19
+ 305 012a 00C0      		rjmp .L35
+ 306               	.L33:
+ 131:led.c         **** 			if((servoAngle->angle <= servoNode->angle)&& flagAngle !=1){
+ 307               		.loc 1 131 0 discriminator 1
+ 308 012c 2130      		cpi r18,1
+ 309 012e 3105      		cpc r19,__zero_reg__
+ 310 0130 01F0      		breq .L14
+ 132:led.c         **** 				servoPreviousNode->node=servoAngle;
+ 311               		.loc 1 132 0
+ 312 0132 EC01      		movw r28,r24
+ 313 0134 BD83      		std Y+5,r27
+ 314 0136 AC83      		std Y+4,r26
+ 133:led.c         **** 				servoAngle->node=servoNode;
+ 315               		.loc 1 133 0
+ 316 0138 1596      		adiw r26,4+1
+ 317 013a FC93      		st X,r31
+ 318 013c EE93      		st -X,r30
+ 319 013e 1497      		sbiw r26,4
+ 320               	.LVL25:
+ 134:led.c         **** 				servoPreviousNode=servoAngle;
+ 321               		.loc 1 134 0
+ 322 0140 CD01      		movw r24,r26
+ 135:led.c         **** 				flagAngle=1;
+ 323               		.loc 1 135 0
+ 324 0142 21E0      		ldi r18,lo8(1)
+ 325 0144 30E0      		ldi r19,0
+ 326 0146 00C0      		rjmp .L14
+ 327               	.LVL26:
+ 328               	.L34:
+ 137:led.c         **** 			if((servoAngle->number==servoNode->number)&& flagNumber!=1){
+ 329               		.loc 1 137 0 discriminator 1
+ 330 0148 6130      		cpi r22,1
+ 331 014a 7105      		cpc r23,__zero_reg__
+ 332 014c 01F0      		breq .L16
+ 138:led.c         **** 				if(num==1)
+ 333               		.loc 1 138 0
+ 334 014e 4130      		cpi r20,1
+ 335 0150 5105      		cpc r21,__zero_reg__
+ 336 0152 01F4      		brne .L17
+ 139:led.c         **** 					*servoSwitchPtr=servoNode;
+ 337               		.loc 1 139 0
+ 338 0154 6091 0000 		lds r22,servoSwitchPtr
+ 339 0158 7091 0000 		lds r23,servoSwitchPtr+1
+ 340               	.LVL27:
+ 341 015c 00C0      		rjmp .L32
+ 342               	.LVL28:
+ 343               	.L17:
+ 141:led.c         **** 					*servoSwitchPtrDup=servoNode;
+ 344               		.loc 1 141 0
+ 345 015e 6091 0000 		lds r22,servoSwitchPtrDup
+ 346 0162 7091 0000 		lds r23,servoSwitchPtrDup+1
+ 347               	.LVL29:
+ 348               	.L32:
+ 349 0166 EB01      		movw r28,r22
+ 350 0168 F983      		std Y+1,r31
+ 351 016a E883      		st Y,r30
+ 142:led.c         **** 				servoPreviousNode->node=servoNode->node;
+ 352               		.loc 1 142 0
+ 353 016c 6481      		ldd r22,Z+4
+ 354 016e 7581      		ldd r23,Z+5
+ 355 0170 EC01      		movw r28,r24
+ 356 0172 7D83      		std Y+5,r23
+ 357 0174 6C83      		std Y+4,r22
+ 358               	.LVL30:
+ 359 0176 00C0      		rjmp .L16
+ 360               	.LVL31:
+ 361               	.L35:
+ 147:led.c         **** 		}
+ 148:led.c         **** 		if(flagAngle==0){	
+ 362               		.loc 1 148 0
+ 363 0178 232B      		or r18,r19
+ 364 017a 01F4      		brne .L23
+ 149:led.c         **** 			servoPreviousNode->node=servoAngle;
+ 365               		.loc 1 149 0
+ 366 017c FC01      		movw r30,r24
+ 367               	.LVL32:
+ 368 017e B583      		std Z+5,r27
+ 369 0180 A483      		std Z+4,r26
+ 150:led.c         **** 			servoAngle->node=NULL;
+ 370               		.loc 1 150 0
+ 371 0182 1596      		adiw r26,4+1
+ 372 0184 1C92      		st X,__zero_reg__
+ 373 0186 1E92      		st -X,__zero_reg__
+ 374 0188 1497      		sbiw r26,4
+ 375               	.L23:
+ 151:led.c         **** 		}
+ 152:led.c         **** 		return nodeHead;
+ 376               		.loc 1 152 0
+ 377 018a F501      		movw r30,r10
+ 378 018c 00C0      		rjmp .L26
+ 379               	.LVL33:
+ 380               	.L16:
+ 135:led.c         **** 				flagAngle=1;
+ 381               		.loc 1 135 0
+ 382 018e 61E0      		ldi r22,lo8(1)
+ 383 0190 70E0      		ldi r23,0
+ 384 0192 00C0      		rjmp .L15
+ 385               	.LVL34:
+ 386               	.L26:
+ 387               	.LBE6:
+ 153:led.c         **** 	}
+ 154:led.c         **** 	else{
+ 155:led.c         **** 		return nodeHead;
+ 156:led.c         **** 	}		
+ 157:led.c         **** }
+ 388               		.loc 1 157 0
+ 389 0194 CF01      		movw r24,r30
+ 390               	/* epilogue start */
+ 391 0196 DF91      		pop r29
+ 392 0198 CF91      		pop r28
+ 393 019a 1F91      		pop r17
+ 394 019c 0F91      		pop r16
+ 395 019e FF90      		pop r15
+ 396 01a0 EF90      		pop r14
+ 397 01a2 DF90      		pop r13
+ 398 01a4 CF90      		pop r12
+ 399 01a6 BF90      		pop r11
+ 400 01a8 AF90      		pop r10
+ 401 01aa 0895      		ret
+ 402               		.cfi_endproc
+ 403               	.LFE8:
+ 405               	.global	SendInteger
+ 407               	SendInteger:
+ 408               	.LFB10:
+ 158:led.c         **** 
+ 159:led.c         **** void PrepareAddToList(char *start)
+ 160:led.c         **** {
+ 161:led.c         **** 	(*servoSwitchPtr)->number=(*start-48);
+ 162:led.c         **** 	(*servoSwitchPtr)->angle=StringToInt(start+1);
+ 163:led.c         **** 	(*servoSwitchPtrDup)->number=(*start-48);
+ 164:led.c         **** 	(*servoSwitchPtrDup)->angle=StringToInt(start+1);
+ 165:led.c         **** }
+ 166:led.c         **** 
+ 167:led.c         **** void SendInteger(uint16_t num)
+ 168:led.c         **** {
+ 409               		.loc 1 168 0
+ 410               		.cfi_startproc
+ 411               	.LVL35:
+ 412               	/* prologue: function */
+ 413               	/* frame size = 0 */
+ 414               	/* stack size = 0 */
+ 415               	.L__stack_usage = 0
+ 416               	.LBB7:
+ 417               	.LBB8:
+ 418               		.file 2 "/usr/lib/avr/include/util/delay.h"
+   1:/usr/lib/avr/include/util/delay.h **** /* Copyright (c) 2002, Marek Michalkiewicz
+   2:/usr/lib/avr/include/util/delay.h ****    Copyright (c) 2004,2005,2007 Joerg Wunsch
+   3:/usr/lib/avr/include/util/delay.h ****    Copyright (c) 2007  Florin-Viorel Petrov
+   4:/usr/lib/avr/include/util/delay.h ****    All rights reserved.
+   5:/usr/lib/avr/include/util/delay.h **** 
+   6:/usr/lib/avr/include/util/delay.h ****    Redistribution and use in source and binary forms, with or without
+   7:/usr/lib/avr/include/util/delay.h ****    modification, are permitted provided that the following conditions are met:
+   8:/usr/lib/avr/include/util/delay.h **** 
+   9:/usr/lib/avr/include/util/delay.h ****    * Redistributions of source code must retain the above copyright
+  10:/usr/lib/avr/include/util/delay.h ****      notice, this list of conditions and the following disclaimer.
+  11:/usr/lib/avr/include/util/delay.h **** 
+  12:/usr/lib/avr/include/util/delay.h ****    * Redistributions in binary form must reproduce the above copyright
+  13:/usr/lib/avr/include/util/delay.h ****      notice, this list of conditions and the following disclaimer in
+  14:/usr/lib/avr/include/util/delay.h ****      the documentation and/or other materials provided with the
+  15:/usr/lib/avr/include/util/delay.h ****      distribution.
+  16:/usr/lib/avr/include/util/delay.h **** 
+  17:/usr/lib/avr/include/util/delay.h ****    * Neither the name of the copyright holders nor the names of
+  18:/usr/lib/avr/include/util/delay.h ****      contributors may be used to endorse or promote products derived
+  19:/usr/lib/avr/include/util/delay.h ****      from this software without specific prior written permission.
+  20:/usr/lib/avr/include/util/delay.h **** 
+  21:/usr/lib/avr/include/util/delay.h ****   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+  22:/usr/lib/avr/include/util/delay.h ****   AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+  23:/usr/lib/avr/include/util/delay.h ****   IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+  24:/usr/lib/avr/include/util/delay.h ****   ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
+  25:/usr/lib/avr/include/util/delay.h ****   LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+  26:/usr/lib/avr/include/util/delay.h ****   CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+  27:/usr/lib/avr/include/util/delay.h ****   SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+  28:/usr/lib/avr/include/util/delay.h ****   INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+  29:/usr/lib/avr/include/util/delay.h ****   CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+  30:/usr/lib/avr/include/util/delay.h ****   ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+  31:/usr/lib/avr/include/util/delay.h ****   POSSIBILITY OF SUCH DAMAGE. */
+  32:/usr/lib/avr/include/util/delay.h **** 
+  33:/usr/lib/avr/include/util/delay.h **** /* $Id: delay.h.in 2251 2011-09-14 08:20:33Z joerg_wunsch $ */
+  34:/usr/lib/avr/include/util/delay.h **** 
+  35:/usr/lib/avr/include/util/delay.h **** #ifndef _UTIL_DELAY_H_
+  36:/usr/lib/avr/include/util/delay.h **** #define _UTIL_DELAY_H_ 1
+  37:/usr/lib/avr/include/util/delay.h **** 
+  38:/usr/lib/avr/include/util/delay.h **** #ifndef __HAS_DELAY_CYCLES
+  39:/usr/lib/avr/include/util/delay.h **** #define __HAS_DELAY_CYCLES 1
+  40:/usr/lib/avr/include/util/delay.h **** #endif
+  41:/usr/lib/avr/include/util/delay.h **** 
+  42:/usr/lib/avr/include/util/delay.h **** #include <inttypes.h>
+  43:/usr/lib/avr/include/util/delay.h **** #include <util/delay_basic.h>
+  44:/usr/lib/avr/include/util/delay.h **** #include <math.h>
+  45:/usr/lib/avr/include/util/delay.h **** 
+  46:/usr/lib/avr/include/util/delay.h **** /** \file */
+  47:/usr/lib/avr/include/util/delay.h **** /** \defgroup util_delay <util/delay.h>: Convenience functions for busy-wait delay loops
+  48:/usr/lib/avr/include/util/delay.h ****     \code
+  49:/usr/lib/avr/include/util/delay.h ****     #define F_CPU 1000000UL  // 1 MHz
+  50:/usr/lib/avr/include/util/delay.h ****     //#define F_CPU 14.7456E6
+  51:/usr/lib/avr/include/util/delay.h ****     #include <util/delay.h>
+  52:/usr/lib/avr/include/util/delay.h ****     \endcode
+  53:/usr/lib/avr/include/util/delay.h **** 
+  54:/usr/lib/avr/include/util/delay.h ****     \note As an alternative method, it is possible to pass the
+  55:/usr/lib/avr/include/util/delay.h ****     F_CPU macro down to the compiler from the Makefile.
+  56:/usr/lib/avr/include/util/delay.h ****     Obviously, in that case, no \c \#define statement should be
+  57:/usr/lib/avr/include/util/delay.h ****     used.
+  58:/usr/lib/avr/include/util/delay.h **** 
+  59:/usr/lib/avr/include/util/delay.h ****     The functions in this header file are wrappers around the basic
+  60:/usr/lib/avr/include/util/delay.h ****     busy-wait functions from <util/delay_basic.h>.  They are meant as
+  61:/usr/lib/avr/include/util/delay.h ****     convenience functions where actual time values can be specified
+  62:/usr/lib/avr/include/util/delay.h ****     rather than a number of cycles to wait for.  The idea behind is
+  63:/usr/lib/avr/include/util/delay.h ****     that compile-time constant expressions will be eliminated by
+  64:/usr/lib/avr/include/util/delay.h ****     compiler optimization so floating-point expressions can be used
+  65:/usr/lib/avr/include/util/delay.h ****     to calculate the number of delay cycles needed based on the CPU
+  66:/usr/lib/avr/include/util/delay.h ****     frequency passed by the macro F_CPU.
+  67:/usr/lib/avr/include/util/delay.h **** 
+  68:/usr/lib/avr/include/util/delay.h ****     \note In order for these functions to work as intended, compiler
+  69:/usr/lib/avr/include/util/delay.h ****     optimizations <em>must</em> be enabled, and the delay time
+  70:/usr/lib/avr/include/util/delay.h ****     <em>must</em> be an expression that is a known constant at
+  71:/usr/lib/avr/include/util/delay.h ****     compile-time.  If these requirements are not met, the resulting
+  72:/usr/lib/avr/include/util/delay.h ****     delay will be much longer (and basically unpredictable), and
+  73:/usr/lib/avr/include/util/delay.h ****     applications that otherwise do not use floating-point calculations
+  74:/usr/lib/avr/include/util/delay.h ****     will experience severe code bloat by the floating-point library
+  75:/usr/lib/avr/include/util/delay.h ****     routines linked into the application.
+  76:/usr/lib/avr/include/util/delay.h **** 
+  77:/usr/lib/avr/include/util/delay.h ****     The functions available allow the specification of microsecond, and
+  78:/usr/lib/avr/include/util/delay.h ****     millisecond delays directly, using the application-supplied macro
+  79:/usr/lib/avr/include/util/delay.h ****     F_CPU as the CPU clock frequency (in Hertz).
+  80:/usr/lib/avr/include/util/delay.h **** 
+  81:/usr/lib/avr/include/util/delay.h **** */
+  82:/usr/lib/avr/include/util/delay.h **** 
+  83:/usr/lib/avr/include/util/delay.h **** #if !defined(__DOXYGEN__)
+  84:/usr/lib/avr/include/util/delay.h **** static inline void _delay_us(double __us) __attribute__((always_inline));
+  85:/usr/lib/avr/include/util/delay.h **** static inline void _delay_ms(double __ms) __attribute__((always_inline));
+  86:/usr/lib/avr/include/util/delay.h **** #endif
+  87:/usr/lib/avr/include/util/delay.h **** 
+  88:/usr/lib/avr/include/util/delay.h **** #ifndef F_CPU
+  89:/usr/lib/avr/include/util/delay.h **** /* prevent compiler error by supplying a default */
+  90:/usr/lib/avr/include/util/delay.h **** # warning "F_CPU not defined for <util/delay.h>"
+  91:/usr/lib/avr/include/util/delay.h **** # define F_CPU 1000000UL
+  92:/usr/lib/avr/include/util/delay.h **** #endif
+  93:/usr/lib/avr/include/util/delay.h **** 
+  94:/usr/lib/avr/include/util/delay.h **** #ifndef __OPTIMIZE__
+  95:/usr/lib/avr/include/util/delay.h **** # warning "Compiler optimizations disabled; functions from <util/delay.h> won't work as designed"
+  96:/usr/lib/avr/include/util/delay.h **** #endif
+  97:/usr/lib/avr/include/util/delay.h **** 
+  98:/usr/lib/avr/include/util/delay.h **** #if __HAS_DELAY_CYCLES && defined(__OPTIMIZE__) && \
+  99:/usr/lib/avr/include/util/delay.h ****   !defined(__DELAY_BACKWARD_COMPATIBLE__) &&	   \
+ 100:/usr/lib/avr/include/util/delay.h ****   __STDC_HOSTED__
+ 101:/usr/lib/avr/include/util/delay.h **** #  include <math.h>
+ 102:/usr/lib/avr/include/util/delay.h **** #endif
+ 103:/usr/lib/avr/include/util/delay.h **** 
+ 104:/usr/lib/avr/include/util/delay.h **** /**
+ 105:/usr/lib/avr/include/util/delay.h ****    \ingroup util_delay
+ 106:/usr/lib/avr/include/util/delay.h **** 
+ 107:/usr/lib/avr/include/util/delay.h ****    Perform a delay of \c __ms milliseconds, using _delay_loop_2().
+ 108:/usr/lib/avr/include/util/delay.h **** 
+ 109:/usr/lib/avr/include/util/delay.h ****    The macro F_CPU is supposed to be defined to a
+ 110:/usr/lib/avr/include/util/delay.h ****    constant defining the CPU clock frequency (in Hertz).
+ 111:/usr/lib/avr/include/util/delay.h **** 
+ 112:/usr/lib/avr/include/util/delay.h ****    The maximal possible delay is 262.14 ms / F_CPU in MHz.
+ 113:/usr/lib/avr/include/util/delay.h **** 
+ 114:/usr/lib/avr/include/util/delay.h ****    When the user request delay which exceed the maximum possible one,
+ 115:/usr/lib/avr/include/util/delay.h ****    _delay_ms() provides a decreased resolution functionality. In this
+ 116:/usr/lib/avr/include/util/delay.h ****    mode _delay_ms() will work with a resolution of 1/10 ms, providing
+ 117:/usr/lib/avr/include/util/delay.h ****    delays up to 6.5535 seconds (independent from CPU frequency).  The
+ 118:/usr/lib/avr/include/util/delay.h ****    user will not be informed about decreased resolution.
+ 119:/usr/lib/avr/include/util/delay.h **** 
+ 120:/usr/lib/avr/include/util/delay.h ****    If the avr-gcc toolchain has __builtin_avr_delay_cycles(unsigned long)
+ 121:/usr/lib/avr/include/util/delay.h ****    support, maximal possible delay is 4294967.295 ms/ F_CPU in MHz. For
+ 122:/usr/lib/avr/include/util/delay.h ****    values greater than the maximal possible delay, overflows results in
+ 123:/usr/lib/avr/include/util/delay.h ****    no delay i.e., 0ms.
+ 124:/usr/lib/avr/include/util/delay.h **** 
+ 125:/usr/lib/avr/include/util/delay.h ****    Conversion of __us into clock cycles may not always result in integer.
+ 126:/usr/lib/avr/include/util/delay.h ****    By default, the clock cycles rounded up to next integer. This ensures that
+ 127:/usr/lib/avr/include/util/delay.h ****    the user gets atleast __us microseconds of delay.
+ 128:/usr/lib/avr/include/util/delay.h **** 
+ 129:/usr/lib/avr/include/util/delay.h ****    Alternatively, user can define __DELAY_ROUND_DOWN__ and __DELAY_ROUND_CLOSEST__
+ 130:/usr/lib/avr/include/util/delay.h ****    to round down and round to closest integer.
+ 131:/usr/lib/avr/include/util/delay.h **** 
+ 132:/usr/lib/avr/include/util/delay.h ****    Note: The new implementation of _delay_ms(double __ms) with 
+ 133:/usr/lib/avr/include/util/delay.h ****     __builtin_avr_delay_cycles(unsigned long) support is not backward compatible. 
+ 134:/usr/lib/avr/include/util/delay.h ****    User can define __DELAY_BACKWARD_COMPATIBLE__ to get a backward compatible delay.
+ 135:/usr/lib/avr/include/util/delay.h ****    Also, the backward compatible
+ 136:/usr/lib/avr/include/util/delay.h ****    algorithm will be chosen if the code is compiled in a <em>freestanding
+ 137:/usr/lib/avr/include/util/delay.h ****    environment</em> (GCC option \c -ffreestanding), as the math functions
+ 138:/usr/lib/avr/include/util/delay.h ****    required for rounding are not available to the compiler then.
+ 139:/usr/lib/avr/include/util/delay.h **** 
+ 140:/usr/lib/avr/include/util/delay.h ****  */
+ 141:/usr/lib/avr/include/util/delay.h **** void
+ 142:/usr/lib/avr/include/util/delay.h **** _delay_ms(double __ms)
+ 143:/usr/lib/avr/include/util/delay.h **** {
+ 144:/usr/lib/avr/include/util/delay.h **** 	uint16_t __ticks;
+ 145:/usr/lib/avr/include/util/delay.h **** 	double __tmp ; 
+ 146:/usr/lib/avr/include/util/delay.h **** #if __HAS_DELAY_CYCLES && defined(__OPTIMIZE__) && \
+ 147:/usr/lib/avr/include/util/delay.h ****   !defined(__DELAY_BACKWARD_COMPATIBLE__) &&	   \
+ 148:/usr/lib/avr/include/util/delay.h ****   __STDC_HOSTED__
+ 149:/usr/lib/avr/include/util/delay.h **** 	uint32_t __ticks_dc;
+ 150:/usr/lib/avr/include/util/delay.h **** 	extern void __builtin_avr_delay_cycles(unsigned long);
+ 151:/usr/lib/avr/include/util/delay.h **** 	__tmp = ((F_CPU) / 1e3) * __ms;
+ 152:/usr/lib/avr/include/util/delay.h **** 
+ 153:/usr/lib/avr/include/util/delay.h **** 	#if defined(__DELAY_ROUND_DOWN__)
+ 154:/usr/lib/avr/include/util/delay.h **** 		__ticks_dc = (uint32_t)fabs(__tmp);
+ 155:/usr/lib/avr/include/util/delay.h **** 
+ 156:/usr/lib/avr/include/util/delay.h **** 	#elif defined(__DELAY_ROUND_CLOSEST__)
+ 157:/usr/lib/avr/include/util/delay.h **** 		__ticks_dc = (uint32_t)(fabs(__tmp)+0.5);
+ 158:/usr/lib/avr/include/util/delay.h **** 
+ 159:/usr/lib/avr/include/util/delay.h **** 	#else
+ 160:/usr/lib/avr/include/util/delay.h **** 		//round up by default
+ 161:/usr/lib/avr/include/util/delay.h **** 		__ticks_dc = (uint32_t)(ceil(fabs(__tmp)));
+ 162:/usr/lib/avr/include/util/delay.h **** 	#endif
+ 163:/usr/lib/avr/include/util/delay.h **** 
+ 164:/usr/lib/avr/include/util/delay.h **** 	__builtin_avr_delay_cycles(__ticks_dc);
+ 419               		.loc 2 164 0
+ 420 01ac EFE3      		ldi r30,lo8(-25537)
+ 421 01ae FCE9      		ldi r31,hi8(-25537)
+ 422 01b0 3197      		1: sbiw r30,1
+ 423 01b2 01F4      		brne 1b
+ 424 01b4 00C0      		rjmp .
+ 425 01b6 0000      		nop
+ 426               	.L38:
+ 427               	.LBE8:
+ 428               	.LBE7:
+ 169:led.c         **** 	_delay_ms(10);
+ 170:led.c         **** 	while(!(UCSRA && (1<<UDRE)));
+ 429               		.loc 1 170 0 discriminator 1
+ 430 01b8 9BB1      		in r25,0xb
+ 431 01ba 9923      		tst r25
+ 432 01bc 01F0      		breq .L38
+ 171:led.c         **** 	UDR=num;
+ 433               		.loc 1 171 0
+ 434 01be 8CB9      		out 0xc,r24
+ 435 01c0 0895      		ret
+ 436               		.cfi_endproc
+ 437               	.LFE10:
+ 439               	.global	StringToInt
+ 441               	StringToInt:
+ 442               	.LFB11:
+ 172:led.c         **** }
+ 173:led.c         **** 
+ 174:led.c         **** uint16_t StringToInt(char *dataStart)
+ 175:led.c         **** {
+ 443               		.loc 1 175 0
+ 444               		.cfi_startproc
+ 445               	.LVL36:
+ 446               	/* prologue: function */
+ 447               	/* frame size = 0 */
+ 448               	/* stack size = 0 */
+ 449               	.L__stack_usage = 0
+ 450 01c2 FC01      		movw r30,r24
+ 451               	.LVL37:
+ 176:led.c         **** 	uint16_t data=0;
+ 452               		.loc 1 176 0
+ 453 01c4 80E0      		ldi r24,0
+ 454 01c6 90E0      		ldi r25,0
+ 455               	.LVL38:
+ 177:led.c         **** 	while(*dataStart!=END_OF_SIGNAL){						//ASSIGN THE STOP BIT RECOGNITION
+ 178:led.c         **** 		data=data*10+(*dataStart-48);
+ 456               		.loc 1 178 0
+ 457 01c8 3AE0      		ldi r19,lo8(10)
+ 458               	.LVL39:
+ 459               	.L40:
+ 177:led.c         **** 	while(*dataStart!=END_OF_SIGNAL){						//ASSIGN THE STOP BIT RECOGNITION
+ 460               		.loc 1 177 0 discriminator 1
+ 461 01ca 2191      		ld r18,Z+
+ 462               	.LVL40:
+ 463 01cc 2D30      		cpi r18,lo8(13)
+ 464 01ce 01F0      		breq .L42
+ 465               		.loc 1 178 0
+ 466 01d0 AC01      		movw r20,r24
+ 467 01d2 349F      		mul r19,r20
+ 468 01d4 C001      		movw r24,r0
+ 469 01d6 359F      		mul r19,r21
+ 470 01d8 900D      		add r25,r0
+ 471 01da 1124      		clr __zero_reg__
+ 472               	.LVL41:
+ 473 01dc C097      		sbiw r24,48
+ 474 01de 820F      		add r24,r18
+ 475 01e0 911D      		adc r25,__zero_reg__
+ 476               	.LVL42:
+ 477 01e2 00C0      		rjmp .L40
+ 478               	.LVL43:
+ 479               	.L42:
+ 480               	/* epilogue start */
+ 179:led.c         **** 		dataStart++;
+ 180:led.c         **** 	}
+ 181:led.c         **** 	return data;
+ 182:led.c         **** }
+ 481               		.loc 1 182 0
+ 482 01e4 0895      		ret
+ 483               		.cfi_endproc
+ 484               	.LFE11:
+ 486               	.global	PrepareAddToList
+ 488               	PrepareAddToList:
+ 489               	.LFB9:
+ 160:led.c         **** {
+ 490               		.loc 1 160 0
+ 491               		.cfi_startproc
+ 492               	.LVL44:
+ 493 01e6 EF92      		push r14
+ 494               	.LCFI18:
+ 495               		.cfi_def_cfa_offset 3
+ 496               		.cfi_offset 14, -2
+ 497 01e8 FF92      		push r15
+ 498               	.LCFI19:
+ 499               		.cfi_def_cfa_offset 4
+ 500               		.cfi_offset 15, -3
+ 501 01ea 0F93      		push r16
+ 502               	.LCFI20:
+ 503               		.cfi_def_cfa_offset 5
+ 504               		.cfi_offset 16, -4
+ 505 01ec 1F93      		push r17
+ 506               	.LCFI21:
+ 507               		.cfi_def_cfa_offset 6
+ 508               		.cfi_offset 17, -5
+ 509 01ee CF93      		push r28
+ 510               	.LCFI22:
+ 511               		.cfi_def_cfa_offset 7
+ 512               		.cfi_offset 28, -6
+ 513 01f0 DF93      		push r29
+ 514               	.LCFI23:
+ 515               		.cfi_def_cfa_offset 8
+ 516               		.cfi_offset 29, -7
+ 517               	/* prologue: function */
+ 518               	/* frame size = 0 */
+ 519               	/* stack size = 6 */
+ 520               	.L__stack_usage = 6
+ 521 01f2 7C01      		movw r14,r24
+ 161:led.c         **** 	(*servoSwitchPtr)->number=(*start-48);
+ 522               		.loc 1 161 0
+ 523 01f4 E091 0000 		lds r30,servoSwitchPtr
+ 524 01f8 F091 0000 		lds r31,servoSwitchPtr+1
+ 525 01fc 0081      		ld r16,Z
+ 526 01fe 1181      		ldd r17,Z+1
+ 527 0200 EC01      		movw r28,r24
+ 528 0202 2991      		ld r18,Y+
+ 529 0204 30E0      		ldi r19,0
+ 530 0206 2053      		subi r18,48
+ 531 0208 3109      		sbc r19,__zero_reg__
+ 532 020a F801      		movw r30,r16
+ 533 020c 3383      		std Z+3,r19
+ 534 020e 2283      		std Z+2,r18
+ 162:led.c         **** 	(*servoSwitchPtr)->angle=StringToInt(start+1);
+ 535               		.loc 1 162 0
+ 536 0210 CE01      		movw r24,r28
+ 537               	.LVL45:
+ 538 0212 0E94 0000 		call StringToInt
+ 539               	.LVL46:
+ 540 0216 F801      		movw r30,r16
+ 541 0218 9183      		std Z+1,r25
+ 542 021a 8083      		st Z,r24
+ 163:led.c         **** 	(*servoSwitchPtrDup)->number=(*start-48);
+ 543               		.loc 1 163 0
+ 544 021c E091 0000 		lds r30,servoSwitchPtrDup
+ 545 0220 F091 0000 		lds r31,servoSwitchPtrDup+1
+ 546 0224 0081      		ld r16,Z
+ 547 0226 1181      		ldd r17,Z+1
+ 548 0228 F701      		movw r30,r14
+ 549 022a 8081      		ld r24,Z
+ 550 022c 90E0      		ldi r25,0
+ 551 022e C097      		sbiw r24,48
+ 552 0230 F801      		movw r30,r16
+ 553 0232 9383      		std Z+3,r25
+ 554 0234 8283      		std Z+2,r24
+ 164:led.c         **** 	(*servoSwitchPtrDup)->angle=StringToInt(start+1);
+ 555               		.loc 1 164 0
+ 556 0236 CE01      		movw r24,r28
+ 557 0238 0E94 0000 		call StringToInt
+ 558               	.LVL47:
+ 559 023c F801      		movw r30,r16
+ 560 023e 9183      		std Z+1,r25
+ 561 0240 8083      		st Z,r24
+ 562               	/* epilogue start */
+ 165:led.c         **** }
+ 563               		.loc 1 165 0
+ 564 0242 DF91      		pop r29
+ 565 0244 CF91      		pop r28
+ 566 0246 1F91      		pop r17
+ 567 0248 0F91      		pop r16
+ 568 024a FF90      		pop r15
+ 569 024c EF90      		pop r14
+ 570               	.LVL48:
+ 571 024e 0895      		ret
+ 572               		.cfi_endproc
+ 573               	.LFE9:
+ 575               	.global	SendList
+ 577               	SendList:
+ 578               	.LFB12:
+ 183:led.c         **** 
+ 184:led.c         **** servoList* SendList(servoList* head)
+ 185:led.c         **** {
+ 579               		.loc 1 185 0
+ 580               		.cfi_startproc
+ 581               	.LVL49:
+ 582 0250 0F93      		push r16
+ 583               	.LCFI24:
+ 584               		.cfi_def_cfa_offset 3
+ 585               		.cfi_offset 16, -2
+ 586 0252 1F93      		push r17
+ 587               	.LCFI25:
+ 588               		.cfi_def_cfa_offset 4
+ 589               		.cfi_offset 17, -3
+ 590 0254 CF93      		push r28
+ 591               	.LCFI26:
+ 592               		.cfi_def_cfa_offset 5
+ 593               		.cfi_offset 28, -4
+ 594 0256 DF93      		push r29
+ 595               	.LCFI27:
+ 596               		.cfi_def_cfa_offset 6
+ 597               		.cfi_offset 29, -5
+ 598               	/* prologue: function */
+ 599               	/* frame size = 0 */
+ 600               	/* stack size = 4 */
+ 601               	.L__stack_usage = 4
+ 602 0258 8C01      		movw r16,r24
+ 603               	.LVL50:
+ 186:led.c         **** 	servoList *tempServo=head;
+ 604               		.loc 1 186 0
+ 605 025a C82F      		mov r28,r24
+ 606 025c D12F      		mov r29,r17
+ 607               	.LVL51:
+ 608               	.L45:
+ 187:led.c         **** 	while(tempServo!=NULL){
+ 609               		.loc 1 187 0 discriminator 1
+ 610 025e 2097      		sbiw r28,0
+ 611 0260 01F0      		breq .L49
+ 612               	.L47:
+ 188:led.c         **** 		while(!(UCSRA && (1<<UDRE)));
+ 613               		.loc 1 188 0
+ 614 0262 8BB1      		in r24,0xb
+ 615 0264 8823      		tst r24
+ 616 0266 01F0      		breq .L47
+ 189:led.c         **** 		SendInteger(tempServo->angle);
+ 617               		.loc 1 189 0
+ 618 0268 8881      		ld r24,Y
+ 619 026a 9981      		ldd r25,Y+1
+ 620 026c 0E94 0000 		call SendInteger
+ 621               	.LVL52:
+ 190:led.c         **** 		SendInteger(tempServo->number);
+ 622               		.loc 1 190 0
+ 623 0270 8A81      		ldd r24,Y+2
+ 624 0272 9B81      		ldd r25,Y+3
+ 625 0274 0E94 0000 		call SendInteger
+ 626               	.LVL53:
+ 191:led.c         **** 		tempServo=tempServo->node ;
+ 627               		.loc 1 191 0
+ 628 0278 0C80      		ldd __tmp_reg__,Y+4
+ 629 027a DD81      		ldd r29,Y+5
+ 630 027c C02D      		mov r28,__tmp_reg__
+ 631               	.LVL54:
+ 632 027e 00C0      		rjmp .L45
+ 633               	.L49:
+ 192:led.c         **** 		}
+ 193:led.c         **** 	return head;
+ 194:led.c         **** }
+ 634               		.loc 1 194 0
+ 635 0280 C801      		movw r24,r16
+ 636               	/* epilogue start */
+ 637 0282 DF91      		pop r29
+ 638 0284 CF91      		pop r28
+ 639               	.LVL55:
+ 640 0286 1F91      		pop r17
+ 641 0288 0F91      		pop r16
+ 642               	.LVL56:
+ 643 028a 0895      		ret
+ 644               		.cfi_endproc
+ 645               	.LFE12:
+ 647               	.global	USARTInit
+ 649               	USARTInit:
+ 650               	.LFB14:
+ 195:led.c         **** 
+ 196:led.c         **** //ALWAYS KEEP A DELAY OF ABOUT 2MS OR 3MS (MINIMUM) BETWEEN THE TRANSMITTION OF 2 CONSECUTIVE DATA/
+ 197:led.c         **** int main(void)
+ 198:led.c         **** {
+ 199:led.c         **** 	
+ 200:led.c         **** 	servoList *servoNodeHead,*servoNodeHeadDup;
+ 201:led.c         **** 	servoNodeHead=CreateList();
+ 202:led.c         **** 	servoNodeHeadDup=CreateList();
+ 203:led.c         **** 	servoSwitchListPtr=&servoNodeHead;
+ 204:led.c         **** 	tempServoHead=*servoSwitchListPtr;
+ 205:led.c         **** 	//servoHead=tempServoHead=servoNodeHead;
+ 206:led.c         **** 
+ 207:led.c         **** 	servoSwitch=(servoList*)malloc(sizeof(servoList));
+ 208:led.c         **** 	servoSwitchDup=(servoList*)malloc(sizeof(servoList));
+ 209:led.c         **** 	servoSwitchPtr=&servoSwitch;
+ 210:led.c         **** 	servoSwitchPtrDup=&servoSwitchDup;
+ 211:led.c         **** 	tempDataPtr=tempData;
+ 212:led.c         **** 	
+ 213:led.c         **** 	clearbit(UCSRA,RXC);
+ 214:led.c         **** 	USARTInit();
+ 215:led.c         **** 	ServoPortInit();
+ 216:led.c         **** 	TimerInit();
+ 217:led.c         **** 	TCNT1=0;
+ 218:led.c         **** 	sei();
+ 219:led.c         **** 	while(1){
+ 220:led.c         **** 			//Without Delay the below loop is not executing.
+ 221:led.c         **** 			_delay_us(.001); 
+ 222:led.c         **** 			if(arrangeSignalFlag==1){
+ 223:led.c         **** 				PrepareAddToList(tempData);
+ 224:led.c         **** 				if(servoSwitchListPtr==&servoNodeHead){
+ 225:led.c         **** 					servoNodeHeadDup=ArrangeAngle(*servoSwitchPtrDup,servoNodeHeadDup,0);
+ 226:led.c         **** 					servoSwitchListPtr=&servoNodeHeadDup;
+ 227:led.c         **** 					servoNodeHead=ArrangeAngle(*servoSwitchPtr,servoNodeHead,1);
+ 228:led.c         **** 				}
+ 229:led.c         **** 				else{
+ 230:led.c         **** 					servoNodeHead=ArrangeAngle(*servoSwitchPtr,servoNodeHead,1);
+ 231:led.c         **** 					servoSwitchListPtr=&servoNodeHead;
+ 232:led.c         **** 					servoNodeHeadDup=ArrangeAngle(*servoSwitchPtrDup,servoNodeHeadDup,0);
+ 233:led.c         **** 				}
+ 234:led.c         **** 				tempDataPtr=tempData;
+ 235:led.c         **** 				arrangeSignalFlag=0;
+ 236:led.c         **** 				count=0;
+ 237:led.c         **** 			}
+ 238:led.c         **** 	}
+ 239:led.c         **** return 0;
+ 240:led.c         **** }
+ 241:led.c         **** 
+ 242:led.c         **** void USARTInit()
+ 243:led.c         **** {
+ 651               		.loc 1 243 0
+ 652               		.cfi_startproc
+ 653               	/* prologue: function */
+ 654               	/* frame size = 0 */
+ 655               	/* stack size = 0 */
+ 656               	.L__stack_usage = 0
+ 244:led.c         **** 	UCSRB |=(1<<RXEN)|(1<<TXEN)|(1<<RXCIE);						//Enabling the Receiver and Receiver Interrupt
+ 657               		.loc 1 244 0
+ 658 028c 8AB1      		in r24,0xa
+ 659 028e 8869      		ori r24,lo8(-104)
+ 660 0290 8AB9      		out 0xa,r24
+ 245:led.c         **** 	UCSRC |=(1<<URSEL)|(1<<UCSZ1)|(1<<UCSZ0);
+ 661               		.loc 1 245 0
+ 662 0292 80B5      		in r24,0x20
+ 663 0294 8668      		ori r24,lo8(-122)
+ 664 0296 80BD      		out 0x20,r24
+ 246:led.c         **** 	UBRRL = baudRate;
+ 665               		.loc 1 246 0
+ 666 0298 8091 0000 		lds r24,baudRate
+ 667 029c 89B9      		out 0x9,r24
+ 247:led.c         **** 	UBRRH &=~(1<<URSEL);
+ 668               		.loc 1 247 0
+ 669 029e 80B5      		in r24,0x20
+ 670 02a0 8F77      		andi r24,lo8(127)
+ 671 02a2 80BD      		out 0x20,r24
+ 248:led.c         **** 	UBRRH = (baudRate<<8);
+ 672               		.loc 1 248 0
+ 673 02a4 10BC      		out 0x20,__zero_reg__
+ 249:led.c         **** 	clearbit(UCSRA,RXC);								//RXC bit needs to set to zero before enabling interrupt
+ 674               		.loc 1 249 0
+ 675 02a6 5F98      		cbi 0xb,7
+ 676 02a8 0895      		ret
+ 677               		.cfi_endproc
+ 678               	.LFE14:
+ 680               	.global	TimerInit
+ 682               	TimerInit:
+ 683               	.LFB15:
+ 250:led.c         **** }
+ 251:led.c         **** 
+ 252:led.c         **** void TimerInit()
+ 253:led.c         **** {
+ 684               		.loc 1 253 0
+ 685               		.cfi_startproc
+ 686               	/* prologue: function */
+ 687               	/* frame size = 0 */
+ 688               	/* stack size = 0 */
+ 689               	.L__stack_usage = 0
+ 254:led.c         **** 	//TCCR1A |=((0<<WGM11)|(0<<WGM10));	 					//NO CHANGES IN THE TCCR1A REGISTER
+ 255:led.c         **** 	TCCR1B |=(1<<WGM12)|(1<<WGM13)|(1<<CS11);					//CTC MODE(12) - TOP VALUE - ICR1 AND PRESCALAR => 8
+ 690               		.loc 1 255 0
+ 691 02aa 8EB5      		in r24,0x2e
+ 692 02ac 8A61      		ori r24,lo8(26)
+ 693 02ae 8EBD      		out 0x2e,r24
+ 256:led.c         **** 	TIMSK |=(1<<TICIE1);			 					//ENABLING INTERRUPT FOR TCNT1 REGISTER MATCHING ICR1
+ 694               		.loc 1 256 0
+ 695 02b0 89B7      		in r24,0x39
+ 696 02b2 8062      		ori r24,lo8(32)
+ 697 02b4 89BF      		out 0x39,r24
+ 698 02b6 0895      		ret
+ 699               		.cfi_endproc
+ 700               	.LFE15:
+ 702               	.global	ServoPortInit
+ 704               	ServoPortInit:
+ 705               	.LFB16:
+ 257:led.c         **** }
+ 258:led.c         **** 
+ 259:led.c         **** void ServoPortInit()
+ 260:led.c         **** {
+ 706               		.loc 1 260 0
+ 707               		.cfi_startproc
+ 708               	/* prologue: function */
+ 709               	/* frame size = 0 */
+ 710               	/* stack size = 0 */
+ 711               	.L__stack_usage = 0
+ 261:led.c         **** 	DDRB = 0xff;
+ 712               		.loc 1 261 0
+ 713 02b8 8FEF      		ldi r24,lo8(-1)
+ 714 02ba 87BB      		out 0x17,r24
+ 262:led.c         **** 	PORTB= 0xff;
+ 715               		.loc 1 262 0
+ 716 02bc 88BB      		out 0x18,r24
+ 717 02be 0895      		ret
+ 718               		.cfi_endproc
+ 719               	.LFE16:
+ 721               		.section	.text.startup,"ax",@progbits
+ 722               	.global	main
+ 724               	main:
+ 725               	.LFB13:
+ 198:led.c         **** {
+ 726               		.loc 1 198 0
+ 727               		.cfi_startproc
+ 728 0000 CF93      		push r28
+ 729               	.LCFI28:
+ 730               		.cfi_def_cfa_offset 3
+ 731               		.cfi_offset 28, -2
+ 732 0002 DF93      		push r29
+ 733               	.LCFI29:
+ 734               		.cfi_def_cfa_offset 4
+ 735               		.cfi_offset 29, -3
+ 736 0004 00D0      		rcall .
+ 737 0006 00D0      		rcall .
+ 738               	.LCFI30:
+ 739               		.cfi_def_cfa_offset 8
+ 740 0008 CDB7      		in r28,__SP_L__
+ 741 000a DEB7      		in r29,__SP_H__
+ 742               	.LCFI31:
+ 743               		.cfi_def_cfa_register 28
+ 744               	/* prologue: function */
+ 745               	/* frame size = 4 */
+ 746               	/* stack size = 6 */
+ 747               	.L__stack_usage = 6
+ 201:led.c         **** 	servoNodeHead=CreateList();
+ 748               		.loc 1 201 0
+ 749 000c 0E94 0000 		call CreateList
+ 750               	.LVL57:
+ 751 0010 9C83      		std Y+4,r25
+ 752 0012 8B83      		std Y+3,r24
+ 202:led.c         **** 	servoNodeHeadDup=CreateList();
+ 753               		.loc 1 202 0
+ 754 0014 0E94 0000 		call CreateList
+ 755               	.LVL58:
+ 756 0018 9A83      		std Y+2,r25
+ 757 001a 8983      		std Y+1,r24
+ 203:led.c         **** 	servoSwitchListPtr=&servoNodeHead;
+ 758               		.loc 1 203 0
+ 759 001c CE01      		movw r24,r28
+ 760 001e 0396      		adiw r24,3
+ 761 0020 9093 0000 		sts servoSwitchListPtr+1,r25
+ 762 0024 8093 0000 		sts servoSwitchListPtr,r24
+ 204:led.c         **** 	tempServoHead=*servoSwitchListPtr;
+ 763               		.loc 1 204 0
+ 764 0028 8B81      		ldd r24,Y+3
+ 765 002a 9C81      		ldd r25,Y+4
+ 766 002c 9093 0000 		sts tempServoHead+1,r25
+ 767 0030 8093 0000 		sts tempServoHead,r24
+ 207:led.c         **** 	servoSwitch=(servoList*)malloc(sizeof(servoList));
+ 768               		.loc 1 207 0
+ 769 0034 86E0      		ldi r24,lo8(6)
+ 770 0036 90E0      		ldi r25,0
+ 771 0038 0E94 0000 		call malloc
+ 772               	.LVL59:
+ 773 003c 9093 0000 		sts servoSwitch+1,r25
+ 774 0040 8093 0000 		sts servoSwitch,r24
+ 208:led.c         **** 	servoSwitchDup=(servoList*)malloc(sizeof(servoList));
+ 775               		.loc 1 208 0
+ 776 0044 86E0      		ldi r24,lo8(6)
+ 777 0046 90E0      		ldi r25,0
+ 778 0048 0E94 0000 		call malloc
+ 779               	.LVL60:
+ 780 004c 9093 0000 		sts servoSwitchDup+1,r25
+ 781 0050 8093 0000 		sts servoSwitchDup,r24
+ 209:led.c         **** 	servoSwitchPtr=&servoSwitch;
+ 782               		.loc 1 209 0
+ 783 0054 80E0      		ldi r24,lo8(servoSwitch)
+ 784 0056 90E0      		ldi r25,hi8(servoSwitch)
+ 785 0058 9093 0000 		sts servoSwitchPtr+1,r25
+ 786 005c 8093 0000 		sts servoSwitchPtr,r24
+ 210:led.c         **** 	servoSwitchPtrDup=&servoSwitchDup;
+ 787               		.loc 1 210 0
+ 788 0060 80E0      		ldi r24,lo8(servoSwitchDup)
+ 789 0062 90E0      		ldi r25,hi8(servoSwitchDup)
+ 790 0064 9093 0000 		sts servoSwitchPtrDup+1,r25
+ 791 0068 8093 0000 		sts servoSwitchPtrDup,r24
+ 211:led.c         **** 	tempDataPtr=tempData;
+ 792               		.loc 1 211 0
+ 793 006c 80E0      		ldi r24,lo8(tempData)
+ 794 006e 90E0      		ldi r25,hi8(tempData)
+ 795 0070 9093 0000 		sts tempDataPtr+1,r25
+ 796 0074 8093 0000 		sts tempDataPtr,r24
+ 213:led.c         **** 	clearbit(UCSRA,RXC);
+ 797               		.loc 1 213 0
+ 798 0078 5F98      		cbi 0xb,7
+ 214:led.c         **** 	USARTInit();
+ 799               		.loc 1 214 0
+ 800 007a 0E94 0000 		call USARTInit
+ 801               	.LVL61:
+ 215:led.c         **** 	ServoPortInit();
+ 802               		.loc 1 215 0
+ 803 007e 0E94 0000 		call ServoPortInit
+ 804               	.LVL62:
+ 216:led.c         **** 	TimerInit();
+ 805               		.loc 1 216 0
+ 806 0082 0E94 0000 		call TimerInit
+ 807               	.LVL63:
+ 217:led.c         **** 	TCNT1=0;
+ 808               		.loc 1 217 0
+ 809 0086 1DBC      		out 0x2c+1,__zero_reg__
+ 810 0088 1CBC      		out 0x2c,__zero_reg__
+ 218:led.c         **** 	sei();
+ 811               		.loc 1 218 0
+ 812               	/* #APP */
+ 813               	 ;  218 "led.c" 1
+ 814 008a 7894      		sei
+ 815               	 ;  0 "" 2
+ 816               	/* #NOAPP */
+ 817 008c 8E01      		movw r16,r28
+ 818 008e 0D5F      		subi r16,-3
+ 819 0090 1F4F      		sbci r17,-1
+ 226:led.c         **** 					servoSwitchListPtr=&servoNodeHeadDup;
+ 820               		.loc 1 226 0
+ 821 0092 CE01      		movw r24,r28
+ 822 0094 0196      		adiw r24,1
+ 823 0096 7C01      		movw r14,r24
+ 824               	.L55:
+ 825               	.LVL64:
+ 826               	.LBB9:
+ 827               	.LBB10:
+ 165:/usr/lib/avr/include/util/delay.h **** 
+ 166:/usr/lib/avr/include/util/delay.h **** #else
+ 167:/usr/lib/avr/include/util/delay.h **** 	__tmp = ((F_CPU) / 4e3) * __ms;
+ 168:/usr/lib/avr/include/util/delay.h **** 	if (__tmp < 1.0)
+ 169:/usr/lib/avr/include/util/delay.h **** 		__ticks = 1;
+ 170:/usr/lib/avr/include/util/delay.h **** 	else if (__tmp > 65535)
+ 171:/usr/lib/avr/include/util/delay.h **** 	{
+ 172:/usr/lib/avr/include/util/delay.h **** 		//	__ticks = requested delay in 1/10 ms
+ 173:/usr/lib/avr/include/util/delay.h **** 		__ticks = (uint16_t) (__ms * 10.0);
+ 174:/usr/lib/avr/include/util/delay.h **** 		while(__ticks)
+ 175:/usr/lib/avr/include/util/delay.h **** 		{
+ 176:/usr/lib/avr/include/util/delay.h **** 			// wait 1/10 ms
+ 177:/usr/lib/avr/include/util/delay.h **** 			_delay_loop_2(((F_CPU) / 4e3) / 10);
+ 178:/usr/lib/avr/include/util/delay.h **** 			__ticks --;
+ 179:/usr/lib/avr/include/util/delay.h **** 		}
+ 180:/usr/lib/avr/include/util/delay.h **** 		return;
+ 181:/usr/lib/avr/include/util/delay.h **** 	}
+ 182:/usr/lib/avr/include/util/delay.h **** 	else
+ 183:/usr/lib/avr/include/util/delay.h **** 		__ticks = (uint16_t)__tmp;
+ 184:/usr/lib/avr/include/util/delay.h **** 	_delay_loop_2(__ticks);
+ 185:/usr/lib/avr/include/util/delay.h **** #endif
+ 186:/usr/lib/avr/include/util/delay.h **** }
+ 187:/usr/lib/avr/include/util/delay.h **** 
+ 188:/usr/lib/avr/include/util/delay.h **** /**
+ 189:/usr/lib/avr/include/util/delay.h ****    \ingroup util_delay
+ 190:/usr/lib/avr/include/util/delay.h **** 
+ 191:/usr/lib/avr/include/util/delay.h ****    Perform a delay of \c __us microseconds, using _delay_loop_1().
+ 192:/usr/lib/avr/include/util/delay.h **** 
+ 193:/usr/lib/avr/include/util/delay.h ****    The macro F_CPU is supposed to be defined to a
+ 194:/usr/lib/avr/include/util/delay.h ****    constant defining the CPU clock frequency (in Hertz).
+ 195:/usr/lib/avr/include/util/delay.h **** 
+ 196:/usr/lib/avr/include/util/delay.h ****    The maximal possible delay is 768 us / F_CPU in MHz.
+ 197:/usr/lib/avr/include/util/delay.h **** 
+ 198:/usr/lib/avr/include/util/delay.h ****    If the user requests a delay greater than the maximal possible one,
+ 199:/usr/lib/avr/include/util/delay.h ****    _delay_us() will automatically call _delay_ms() instead.  The user
+ 200:/usr/lib/avr/include/util/delay.h ****    will not be informed about this case.
+ 201:/usr/lib/avr/include/util/delay.h **** 
+ 202:/usr/lib/avr/include/util/delay.h ****    If the avr-gcc toolchain has __builtin_avr_delay_cycles(unsigned long)
+ 203:/usr/lib/avr/include/util/delay.h ****    support, maximal possible delay is 4294967.295 us/ F_CPU in MHz. For
+ 204:/usr/lib/avr/include/util/delay.h ****    values greater than the maximal possible delay, overflow results in
+ 205:/usr/lib/avr/include/util/delay.h ****    no delay i.e., 0us.
+ 206:/usr/lib/avr/include/util/delay.h ****   
+ 207:/usr/lib/avr/include/util/delay.h ****    Conversion of __us into clock cycles may not always result in integer.
+ 208:/usr/lib/avr/include/util/delay.h ****    By default, the clock cycles rounded up to next integer. This ensures that
+ 209:/usr/lib/avr/include/util/delay.h ****    the user gets atleast __us microseconds of delay.
+ 210:/usr/lib/avr/include/util/delay.h **** 
+ 211:/usr/lib/avr/include/util/delay.h ****    Alternatively, user can define __DELAY_ROUND_DOWN__ and __DELAY_ROUND_CLOSEST__
+ 212:/usr/lib/avr/include/util/delay.h ****    to round down and round to closest integer.
+ 213:/usr/lib/avr/include/util/delay.h ****  
+ 214:/usr/lib/avr/include/util/delay.h ****    Note: The new implementation of _delay_us(double __us) with 
+ 215:/usr/lib/avr/include/util/delay.h ****     __builtin_avr_delay_cycles(unsigned long) support is not backward compatible.
+ 216:/usr/lib/avr/include/util/delay.h ****    User can define __DELAY_BACKWARD_COMPATIBLE__ to get a backward compatible delay.
+ 217:/usr/lib/avr/include/util/delay.h ****    Also, the backward compatible
+ 218:/usr/lib/avr/include/util/delay.h ****    algorithm will be chosen if the code is compiled in a <em>freestanding
+ 219:/usr/lib/avr/include/util/delay.h ****    environment</em> (GCC option \c -ffreestanding), as the math functions
+ 220:/usr/lib/avr/include/util/delay.h ****    required for rounding are not available to the compiler then.
+ 221:/usr/lib/avr/include/util/delay.h **** 
+ 222:/usr/lib/avr/include/util/delay.h ****  */
+ 223:/usr/lib/avr/include/util/delay.h **** void
+ 224:/usr/lib/avr/include/util/delay.h **** _delay_us(double __us)
+ 225:/usr/lib/avr/include/util/delay.h **** {
+ 226:/usr/lib/avr/include/util/delay.h **** 	uint8_t __ticks;
+ 227:/usr/lib/avr/include/util/delay.h **** 	double __tmp ; 
+ 228:/usr/lib/avr/include/util/delay.h **** #if __HAS_DELAY_CYCLES && defined(__OPTIMIZE__) && \
+ 229:/usr/lib/avr/include/util/delay.h ****   !defined(__DELAY_BACKWARD_COMPATIBLE__) &&	   \
+ 230:/usr/lib/avr/include/util/delay.h ****   __STDC_HOSTED__
+ 231:/usr/lib/avr/include/util/delay.h **** 	uint32_t __ticks_dc;
+ 232:/usr/lib/avr/include/util/delay.h **** 	extern void __builtin_avr_delay_cycles(unsigned long);
+ 233:/usr/lib/avr/include/util/delay.h **** 	__tmp = ((F_CPU) / 1e6) * __us;
+ 234:/usr/lib/avr/include/util/delay.h **** 
+ 235:/usr/lib/avr/include/util/delay.h **** 	#if defined(__DELAY_ROUND_DOWN__)
+ 236:/usr/lib/avr/include/util/delay.h **** 		__ticks_dc = (uint32_t)fabs(__tmp);
+ 237:/usr/lib/avr/include/util/delay.h **** 
+ 238:/usr/lib/avr/include/util/delay.h **** 	#elif defined(__DELAY_ROUND_CLOSEST__)
+ 239:/usr/lib/avr/include/util/delay.h **** 		__ticks_dc = (uint32_t)(fabs(__tmp)+0.5);
+ 240:/usr/lib/avr/include/util/delay.h **** 
+ 241:/usr/lib/avr/include/util/delay.h **** 	#else
+ 242:/usr/lib/avr/include/util/delay.h **** 		//round up by default
+ 243:/usr/lib/avr/include/util/delay.h **** 		__ticks_dc = (uint32_t)(ceil(fabs(__tmp)));
+ 244:/usr/lib/avr/include/util/delay.h **** 	#endif
+ 245:/usr/lib/avr/include/util/delay.h **** 
+ 246:/usr/lib/avr/include/util/delay.h **** 	__builtin_avr_delay_cycles(__ticks_dc);
+ 828               		.loc 2 246 0
+ 829 0098 0000      		nop
+ 830               	.LBE10:
+ 831               	.LBE9:
+ 222:led.c         **** 			if(arrangeSignalFlag==1){
+ 832               		.loc 1 222 0
+ 833 009a 8091 0000 		lds r24,arrangeSignalFlag
+ 834 009e 9091 0000 		lds r25,arrangeSignalFlag+1
+ 835 00a2 0197      		sbiw r24,1
+ 836 00a4 01F4      		brne .L55
+ 223:led.c         **** 				PrepareAddToList(tempData);
+ 837               		.loc 1 223 0
+ 838 00a6 80E0      		ldi r24,lo8(tempData)
+ 839 00a8 90E0      		ldi r25,hi8(tempData)
+ 840 00aa 0E94 0000 		call PrepareAddToList
+ 841               	.LVL65:
+ 224:led.c         **** 				if(servoSwitchListPtr==&servoNodeHead){
+ 842               		.loc 1 224 0
+ 843 00ae 8091 0000 		lds r24,servoSwitchListPtr
+ 844 00b2 9091 0000 		lds r25,servoSwitchListPtr+1
+ 845 00b6 8017      		cp r24,r16
+ 846 00b8 9107      		cpc r25,r17
+ 847 00ba 01F4      		brne .L56
+ 225:led.c         **** 					servoNodeHeadDup=ArrangeAngle(*servoSwitchPtrDup,servoNodeHeadDup,0);
+ 848               		.loc 1 225 0
+ 849 00bc 6981      		ldd r22,Y+1
+ 850 00be 7A81      		ldd r23,Y+2
+ 851 00c0 E091 0000 		lds r30,servoSwitchPtrDup
+ 852 00c4 F091 0000 		lds r31,servoSwitchPtrDup+1
+ 853 00c8 40E0      		ldi r20,0
+ 854 00ca 50E0      		ldi r21,0
+ 855 00cc 8081      		ld r24,Z
+ 856 00ce 9181      		ldd r25,Z+1
+ 857 00d0 0E94 0000 		call ArrangeAngle
+ 858               	.LVL66:
+ 859 00d4 9A83      		std Y+2,r25
+ 860 00d6 8983      		std Y+1,r24
+ 226:led.c         **** 					servoSwitchListPtr=&servoNodeHeadDup;
+ 861               		.loc 1 226 0
+ 862 00d8 F092 0000 		sts servoSwitchListPtr+1,r15
+ 863 00dc E092 0000 		sts servoSwitchListPtr,r14
+ 227:led.c         **** 					servoNodeHead=ArrangeAngle(*servoSwitchPtr,servoNodeHead,1);
+ 864               		.loc 1 227 0
+ 865 00e0 6B81      		ldd r22,Y+3
+ 866 00e2 7C81      		ldd r23,Y+4
+ 867 00e4 E091 0000 		lds r30,servoSwitchPtr
+ 868 00e8 F091 0000 		lds r31,servoSwitchPtr+1
+ 869 00ec 41E0      		ldi r20,lo8(1)
+ 870 00ee 50E0      		ldi r21,0
+ 871 00f0 8081      		ld r24,Z
+ 872 00f2 9181      		ldd r25,Z+1
+ 873 00f4 0E94 0000 		call ArrangeAngle
+ 874               	.LVL67:
+ 875 00f8 9C83      		std Y+4,r25
+ 876 00fa 8B83      		std Y+3,r24
+ 877 00fc 00C0      		rjmp .L57
+ 878               	.L56:
+ 230:led.c         **** 					servoNodeHead=ArrangeAngle(*servoSwitchPtr,servoNodeHead,1);
+ 879               		.loc 1 230 0
+ 880 00fe 6B81      		ldd r22,Y+3
+ 881 0100 7C81      		ldd r23,Y+4
+ 882 0102 E091 0000 		lds r30,servoSwitchPtr
+ 883 0106 F091 0000 		lds r31,servoSwitchPtr+1
+ 884 010a 41E0      		ldi r20,lo8(1)
+ 885 010c 50E0      		ldi r21,0
+ 886 010e 8081      		ld r24,Z
+ 887 0110 9181      		ldd r25,Z+1
+ 888 0112 0E94 0000 		call ArrangeAngle
+ 889               	.LVL68:
+ 890 0116 9C83      		std Y+4,r25
+ 891 0118 8B83      		std Y+3,r24
+ 231:led.c         **** 					servoSwitchListPtr=&servoNodeHead;
+ 892               		.loc 1 231 0
+ 893 011a 1093 0000 		sts servoSwitchListPtr+1,r17
+ 894 011e 0093 0000 		sts servoSwitchListPtr,r16
+ 232:led.c         **** 					servoNodeHeadDup=ArrangeAngle(*servoSwitchPtrDup,servoNodeHeadDup,0);
+ 895               		.loc 1 232 0
+ 896 0122 6981      		ldd r22,Y+1
+ 897 0124 7A81      		ldd r23,Y+2
+ 898 0126 E091 0000 		lds r30,servoSwitchPtrDup
+ 899 012a F091 0000 		lds r31,servoSwitchPtrDup+1
+ 900 012e 40E0      		ldi r20,0
+ 901 0130 50E0      		ldi r21,0
+ 902 0132 8081      		ld r24,Z
+ 903 0134 9181      		ldd r25,Z+1
+ 904 0136 0E94 0000 		call ArrangeAngle
+ 905               	.LVL69:
+ 906 013a 9A83      		std Y+2,r25
+ 907 013c 8983      		std Y+1,r24
+ 908               	.L57:
+ 234:led.c         **** 				tempDataPtr=tempData;
+ 909               		.loc 1 234 0
+ 910 013e 80E0      		ldi r24,lo8(tempData)
+ 911 0140 90E0      		ldi r25,hi8(tempData)
+ 912 0142 9093 0000 		sts tempDataPtr+1,r25
+ 913 0146 8093 0000 		sts tempDataPtr,r24
+ 235:led.c         **** 				arrangeSignalFlag=0;
+ 914               		.loc 1 235 0
+ 915 014a 1092 0000 		sts arrangeSignalFlag+1,__zero_reg__
+ 916 014e 1092 0000 		sts arrangeSignalFlag,__zero_reg__
+ 236:led.c         **** 				count=0;
+ 917               		.loc 1 236 0
+ 918 0152 1092 0000 		sts count+1,__zero_reg__
+ 919 0156 1092 0000 		sts count,__zero_reg__
+ 920 015a 00C0      		rjmp .L55
+ 921               		.cfi_endproc
+ 922               	.LFE13:
+ 924               	.global	__floatunsisf
+ 925               	.global	__mulsf3
+ 926               	.global	__addsf3
+ 927               	.global	__fixunssfsi
+ 928               	.global	__subsf3
+ 929               		.text
+ 930               	.global	__vector_6
+ 932               	__vector_6:
+ 933               	.LFB17:
+ 263:led.c         **** }
+ 264:led.c         **** 
+ 265:led.c         **** //*************************************************************************************************
+ 266:led.c         **** //	      					INTERRUPTS				       	       //
+ 267:led.c         **** //*************************************************************************************************
+ 268:led.c         **** ISR(TIMER1_CAPT_vect)
+ 269:led.c         **** {
+ 934               		.loc 1 269 0
+ 935               		.cfi_startproc
+ 936 02c0 1F92      		push r1
+ 937               	.LCFI32:
+ 938               		.cfi_def_cfa_offset 3
+ 939               		.cfi_offset 1, -2
+ 940 02c2 0F92      		push r0
+ 941               	.LCFI33:
+ 942               		.cfi_def_cfa_offset 4
+ 943               		.cfi_offset 0, -3
+ 944 02c4 0FB6      		in r0,__SREG__
+ 945 02c6 0F92      		push r0
+ 946 02c8 1124      		clr __zero_reg__
+ 947 02ca 2F93      		push r18
+ 948               	.LCFI34:
+ 949               		.cfi_def_cfa_offset 5
+ 950               		.cfi_offset 18, -4
+ 951 02cc 3F93      		push r19
+ 952               	.LCFI35:
+ 953               		.cfi_def_cfa_offset 6
+ 954               		.cfi_offset 19, -5
+ 955 02ce 4F93      		push r20
+ 956               	.LCFI36:
+ 957               		.cfi_def_cfa_offset 7
+ 958               		.cfi_offset 20, -6
+ 959 02d0 5F93      		push r21
+ 960               	.LCFI37:
+ 961               		.cfi_def_cfa_offset 8
+ 962               		.cfi_offset 21, -7
+ 963 02d2 6F93      		push r22
+ 964               	.LCFI38:
+ 965               		.cfi_def_cfa_offset 9
+ 966               		.cfi_offset 22, -8
+ 967 02d4 7F93      		push r23
+ 968               	.LCFI39:
+ 969               		.cfi_def_cfa_offset 10
+ 970               		.cfi_offset 23, -9
+ 971 02d6 8F93      		push r24
+ 972               	.LCFI40:
+ 973               		.cfi_def_cfa_offset 11
+ 974               		.cfi_offset 24, -10
+ 975 02d8 9F93      		push r25
+ 976               	.LCFI41:
+ 977               		.cfi_def_cfa_offset 12
+ 978               		.cfi_offset 25, -11
+ 979 02da AF93      		push r26
+ 980               	.LCFI42:
+ 981               		.cfi_def_cfa_offset 13
+ 982               		.cfi_offset 26, -12
+ 983 02dc BF93      		push r27
+ 984               	.LCFI43:
+ 985               		.cfi_def_cfa_offset 14
+ 986               		.cfi_offset 27, -13
+ 987 02de CF93      		push r28
+ 988               	.LCFI44:
+ 989               		.cfi_def_cfa_offset 15
+ 990               		.cfi_offset 28, -14
+ 991 02e0 DF93      		push r29
+ 992               	.LCFI45:
+ 993               		.cfi_def_cfa_offset 16
+ 994               		.cfi_offset 29, -15
+ 995 02e2 EF93      		push r30
+ 996               	.LCFI46:
+ 997               		.cfi_def_cfa_offset 17
+ 998               		.cfi_offset 30, -16
+ 999 02e4 FF93      		push r31
+ 1000               	.LCFI47:
+ 1001               		.cfi_def_cfa_offset 18
+ 1002               		.cfi_offset 31, -17
+ 1003               	/* prologue: Signal */
+ 1004               	/* frame size = 0 */
+ 1005               	/* stack size = 17 */
+ 1006               	.L__stack_usage = 17
+ 270:led.c         **** 	if(count==0){
+ 1007               		.loc 1 270 0
+ 1008 02e6 8091 0000 		lds r24,count
+ 1009 02ea 9091 0000 		lds r25,count+1
+ 1010 02ee 892B      		or r24,r25
+ 1011 02f0 01F4      		brne .L60
+ 271:led.c         **** 		PORTB=0xff;
+ 1012               		.loc 1 271 0
+ 1013 02f2 8FEF      		ldi r24,lo8(-1)
+ 1014 02f4 88BB      		out 0x18,r24
+ 272:led.c         **** 		ICR1=ICR1_BASE_VALUE+(tempServoHead->angle)*FACTOR;			//struct 0 angle
+ 1015               		.loc 1 272 0
+ 1016 02f6 E091 0000 		lds r30,tempServoHead
+ 1017 02fa F091 0000 		lds r31,tempServoHead+1
+ 1018 02fe 6081      		ld r22,Z
+ 1019 0300 7181      		ldd r23,Z+1
+ 1020 0302 80E0      		ldi r24,0
+ 1021 0304 90E0      		ldi r25,0
+ 1022 0306 0E94 0000 		call __floatunsisf
+ 1023               	.LVL70:
+ 1024 030a 2FE8      		ldi r18,lo8(-113)
+ 1025 030c 32EC      		ldi r19,lo8(-62)
+ 1026 030e 41EB      		ldi r20,lo8(-79)
+ 1027 0310 51E4      		ldi r21,lo8(65)
+ 1028 0312 0E94 0000 		call __mulsf3
+ 1029               	.LVL71:
+ 1030 0316 20E0      		ldi r18,0
+ 1031 0318 30E8      		ldi r19,lo8(-128)
+ 1032 031a 49E8      		ldi r20,lo8(-119)
+ 1033 031c 54E4      		ldi r21,lo8(68)
+ 1034 031e 0E94 0000 		call __addsf3
+ 1035               	.LVL72:
+ 1036 0322 0E94 0000 		call __fixunssfsi
+ 1037               	.LVL73:
+ 1038 0326 77BD      		out 0x26+1,r23
+ 1039 0328 66BD      		out 0x26,r22
+ 1040               	.L60:
+ 273:led.c         **** 	}
+ 274:led.c         **** 	while(((tempServoHead->number==tempServoHead->node->number)&&count<=7)&&count>=1){
+ 275:led.c         **** 		clearbit(PORTB,((tempServoHead->number)-1));
+ 1041               		.loc 1 275 0 discriminator 1
+ 1042 032a 61E0      		ldi r22,lo8(1)
+ 1043 032c 70E0      		ldi r23,0
+ 1044               	.L61:
+ 274:led.c         **** 	while(((tempServoHead->number==tempServoHead->node->number)&&count<=7)&&count>=1){
+ 1045               		.loc 1 274 0 discriminator 1
+ 1046 032e E091 0000 		lds r30,tempServoHead
+ 1047 0332 F091 0000 		lds r31,tempServoHead+1
+ 1048 0336 8281      		ldd r24,Z+2
+ 1049 0338 9381      		ldd r25,Z+3
+ 1050 033a 0480      		ldd __tmp_reg__,Z+4
+ 1051 033c F581      		ldd r31,Z+5
+ 1052 033e E02D      		mov r30,__tmp_reg__
+ 1053 0340 4281      		ldd r20,Z+2
+ 1054 0342 5381      		ldd r21,Z+3
+ 1055 0344 2091 0000 		lds r18,count
+ 1056 0348 3091 0000 		lds r19,count+1
+ 1057 034c 8417      		cp r24,r20
+ 1058 034e 9507      		cpc r25,r21
+ 1059 0350 01F0      		breq .L62
+ 1060               	.L66:
+ 276:led.c         **** 		tempServoHead=tempServoHead->node;
+ 277:led.c         **** 		count++;
+ 278:led.c         **** 	}
+ 279:led.c         **** 	if((1<=count)&&(count<=7)){
+ 1061               		.loc 1 279 0
+ 1062 0352 2150      		subi r18,1
+ 1063 0354 3109      		sbc r19,__zero_reg__
+ 1064 0356 2730      		cpi r18,7
+ 1065 0358 3105      		cpc r19,__zero_reg__
+ 1066 035a 00F0      		brlo .+2
+ 1067 035c 00C0      		rjmp .L64
+ 280:led.c         **** 		clearbit(PORTB,	((tempServoHead->number)-1));				//angle [i-1]
+ 1068               		.loc 1 280 0
+ 1069 035e 48B3      		in r20,0x18
+ 1070 0360 9C01      		movw r18,r24
+ 1071 0362 2150      		subi r18,1
+ 1072 0364 3109      		sbc r19,__zero_reg__
+ 1073 0366 81E0      		ldi r24,lo8(1)
+ 1074 0368 90E0      		ldi r25,0
+ 1075 036a 00C0      		rjmp 2f
+ 1076               		1:
+ 1077 036c 880F      		lsl r24
+ 1078               		2:
+ 1079 036e 2A95      		dec r18
+ 1080 0370 02F4      		brpl 1b
+ 1081 0372 8095      		com r24
+ 1082 0374 8423      		and r24,r20
+ 1083 0376 88BB      		out 0x18,r24
+ 281:led.c         **** 		ICR1=(tempServoHead->node->angle-tempServoHead->angle)*FACTOR;
+ 1084               		.loc 1 281 0
+ 1085 0378 E091 0000 		lds r30,tempServoHead
+ 1086 037c F091 0000 		lds r31,tempServoHead+1
+ 1087 0380 C481      		ldd r28,Z+4
+ 1088 0382 D581      		ldd r29,Z+5
+ 1089 0384 6881      		ld r22,Y
+ 1090 0386 7981      		ldd r23,Y+1
+ 1091 0388 8081      		ld r24,Z
+ 1092 038a 9181      		ldd r25,Z+1
+ 1093 038c 681B      		sub r22,r24
+ 1094 038e 790B      		sbc r23,r25
+ 1095 0390 80E0      		ldi r24,0
+ 1096 0392 90E0      		ldi r25,0
+ 1097 0394 0E94 0000 		call __floatunsisf
+ 1098               	.LVL74:
+ 1099 0398 2FE8      		ldi r18,lo8(-113)
+ 1100 039a 32EC      		ldi r19,lo8(-62)
+ 1101 039c 41EB      		ldi r20,lo8(-79)
+ 1102 039e 51E4      		ldi r21,lo8(65)
+ 1103 03a0 0E94 0000 		call __mulsf3
+ 1104               	.LVL75:
+ 1105 03a4 0E94 0000 		call __fixunssfsi
+ 1106               	.LVL76:
+ 1107 03a8 77BD      		out 0x26+1,r23
+ 1108 03aa 66BD      		out 0x26,r22
+ 282:led.c         **** 		tempServoHead=tempServoHead->node;
+ 1109               		.loc 1 282 0
+ 1110 03ac D093 0000 		sts tempServoHead+1,r29
+ 1111 03b0 C093 0000 		sts tempServoHead,r28
+ 1112 03b4 00C0      		rjmp .L64
+ 1113               	.L62:
+ 274:led.c         **** 	while(((tempServoHead->number==tempServoHead->node->number)&&count<=7)&&count>=1){
+ 1114               		.loc 1 274 0 discriminator 2
+ 1115 03b6 A901      		movw r20,r18
+ 1116 03b8 4150      		subi r20,1
+ 1117 03ba 5109      		sbc r21,__zero_reg__
+ 1118 03bc 4730      		cpi r20,7
+ 1119 03be 5105      		cpc r21,__zero_reg__
+ 1120 03c0 00F4      		brsh .L66
+ 275:led.c         **** 		clearbit(PORTB,((tempServoHead->number)-1));
+ 1121               		.loc 1 275 0
+ 1122 03c2 28B3      		in r18,0x18
+ 1123 03c4 0197      		sbiw r24,1
+ 1124 03c6 AB01      		movw r20,r22
+ 1125 03c8 00C0      		rjmp 2f
+ 1126               		1:
+ 1127 03ca 440F      		lsl r20
+ 1128 03cc 551F      		rol r21
+ 1129               		2:
+ 1130 03ce 8A95      		dec r24
+ 1131 03d0 02F4      		brpl 1b
+ 1132 03d2 CA01      		movw r24,r20
+ 1133 03d4 8095      		com r24
+ 1134 03d6 8223      		and r24,r18
+ 1135 03d8 88BB      		out 0x18,r24
+ 276:led.c         **** 		tempServoHead=tempServoHead->node;
+ 1136               		.loc 1 276 0
+ 1137 03da E091 0000 		lds r30,tempServoHead
+ 1138 03de F091 0000 		lds r31,tempServoHead+1
+ 1139 03e2 8481      		ldd r24,Z+4
+ 1140 03e4 9581      		ldd r25,Z+5
+ 1141 03e6 9093 0000 		sts tempServoHead+1,r25
+ 1142 03ea 8093 0000 		sts tempServoHead,r24
+ 277:led.c         **** 		count++;
+ 1143               		.loc 1 277 0
+ 1144 03ee 8091 0000 		lds r24,count
+ 1145 03f2 9091 0000 		lds r25,count+1
+ 1146 03f6 0196      		adiw r24,1
+ 1147 03f8 9093 0000 		sts count+1,r25
+ 1148 03fc 8093 0000 		sts count,r24
+ 1149 0400 00C0      		rjmp .L61
+ 1150               	.L64:
+ 283:led.c         **** 	}
+ 284:led.c         **** 	if(count>7){
+ 1151               		.loc 1 284 0
+ 1152 0402 8091 0000 		lds r24,count
+ 1153 0406 9091 0000 		lds r25,count+1
+ 1154 040a 0897      		sbiw r24,8
+ 1155 040c 04F0      		brlt .L67
+ 285:led.c         **** 		clearbit(PORTB,((tempServoHead->number)-1));
+ 1156               		.loc 1 285 0
+ 1157 040e 48B3      		in r20,0x18
+ 1158 0410 E091 0000 		lds r30,tempServoHead
+ 1159 0414 F091 0000 		lds r31,tempServoHead+1
+ 1160 0418 2281      		ldd r18,Z+2
+ 1161 041a 3381      		ldd r19,Z+3
+ 1162 041c 2150      		subi r18,1
+ 1163 041e 3109      		sbc r19,__zero_reg__
+ 1164 0420 81E0      		ldi r24,lo8(1)
+ 1165 0422 90E0      		ldi r25,0
+ 1166 0424 00C0      		rjmp 2f
+ 1167               		1:
+ 1168 0426 880F      		lsl r24
+ 1169               		2:
+ 1170 0428 2A95      		dec r18
+ 1171 042a 02F4      		brpl 1b
+ 1172 042c 8095      		com r24
+ 1173 042e 8423      		and r24,r20
+ 1174 0430 88BB      		out 0x18,r24
+ 286:led.c         **** 		ICR1=ICR1_TOP_VALUE-ICR1_BASE_VALUE-(tempServoHead->angle)*FACTOR;
+ 1175               		.loc 1 286 0
+ 1176 0432 E091 0000 		lds r30,tempServoHead
+ 1177 0436 F091 0000 		lds r31,tempServoHead+1
+ 1178 043a 6081      		ld r22,Z
+ 1179 043c 7181      		ldd r23,Z+1
+ 1180 043e 80E0      		ldi r24,0
+ 1181 0440 90E0      		ldi r25,0
+ 1182 0442 0E94 0000 		call __floatunsisf
+ 1183               	.LVL77:
+ 1184 0446 2FE8      		ldi r18,lo8(-113)
+ 1185 0448 32EC      		ldi r19,lo8(-62)
+ 1186 044a 41EB      		ldi r20,lo8(-79)
+ 1187 044c 51E4      		ldi r21,lo8(65)
+ 1188 044e 0E94 0000 		call __mulsf3
+ 1189               	.LVL78:
+ 1190 0452 9B01      		movw r18,r22
+ 1191 0454 AC01      		movw r20,r24
+ 1192 0456 60E0      		ldi r22,0
+ 1193 0458 70E3      		ldi r23,lo8(48)
+ 1194 045a 85E3      		ldi r24,lo8(53)
+ 1195 045c 95E4      		ldi r25,lo8(69)
+ 1196 045e 0E94 0000 		call __subsf3
+ 1197               	.LVL79:
+ 1198 0462 0E94 0000 		call __fixunssfsi
+ 1199               	.LVL80:
+ 1200 0466 77BD      		out 0x26+1,r23
+ 1201 0468 66BD      		out 0x26,r22
+ 287:led.c         **** 		tempServoHead=*servoSwitchListPtr;
+ 1202               		.loc 1 287 0
+ 1203 046a E091 0000 		lds r30,servoSwitchListPtr
+ 1204 046e F091 0000 		lds r31,servoSwitchListPtr+1
+ 1205 0472 8081      		ld r24,Z
+ 1206 0474 9181      		ldd r25,Z+1
+ 1207 0476 9093 0000 		sts tempServoHead+1,r25
+ 1208 047a 8093 0000 		sts tempServoHead,r24
+ 288:led.c         **** 		count=-1;
+ 1209               		.loc 1 288 0
+ 1210 047e 8FEF      		ldi r24,lo8(-1)
+ 1211 0480 9FEF      		ldi r25,lo8(-1)
+ 1212 0482 9093 0000 		sts count+1,r25
+ 1213 0486 8093 0000 		sts count,r24
+ 1214               	.L67:
+ 289:led.c         **** 	}
+ 290:led.c         **** 	count++;
+ 1215               		.loc 1 290 0
+ 1216 048a 8091 0000 		lds r24,count
+ 1217 048e 9091 0000 		lds r25,count+1
+ 1218 0492 0196      		adiw r24,1
+ 1219 0494 9093 0000 		sts count+1,r25
+ 1220 0498 8093 0000 		sts count,r24
+ 291:led.c         **** 	TCNT1=0;
+ 1221               		.loc 1 291 0
+ 1222 049c 1DBC      		out 0x2c+1,__zero_reg__
+ 1223 049e 1CBC      		out 0x2c,__zero_reg__
+ 1224               	/* epilogue start */
+ 292:led.c         **** }
+ 1225               		.loc 1 292 0
+ 1226 04a0 FF91      		pop r31
+ 1227 04a2 EF91      		pop r30
+ 1228 04a4 DF91      		pop r29
+ 1229 04a6 CF91      		pop r28
+ 1230 04a8 BF91      		pop r27
+ 1231 04aa AF91      		pop r26
+ 1232 04ac 9F91      		pop r25
+ 1233 04ae 8F91      		pop r24
+ 1234 04b0 7F91      		pop r23
+ 1235 04b2 6F91      		pop r22
+ 1236 04b4 5F91      		pop r21
+ 1237 04b6 4F91      		pop r20
+ 1238 04b8 3F91      		pop r19
+ 1239 04ba 2F91      		pop r18
+ 1240 04bc 0F90      		pop r0
+ 1241 04be 0FBE      		out __SREG__,r0
+ 1242 04c0 0F90      		pop r0
+ 1243 04c2 1F90      		pop r1
+ 1244 04c4 1895      		reti
+ 1245               		.cfi_endproc
+ 1246               	.LFE17:
+ 1248               	.global	__vector_13
+ 1250               	__vector_13:
+ 1251               	.LFB18:
+ 293:led.c         **** 
+ 294:led.c         **** ISR(USART_RXC_vect)
+ 295:led.c         **** {
+ 1252               		.loc 1 295 0
+ 1253               		.cfi_startproc
+ 1254 04c6 1F92      		push r1
+ 1255               	.LCFI48:
+ 1256               		.cfi_def_cfa_offset 3
+ 1257               		.cfi_offset 1, -2
+ 1258 04c8 0F92      		push r0
+ 1259               	.LCFI49:
+ 1260               		.cfi_def_cfa_offset 4
+ 1261               		.cfi_offset 0, -3
+ 1262 04ca 0FB6      		in r0,__SREG__
+ 1263 04cc 0F92      		push r0
+ 1264 04ce 1124      		clr __zero_reg__
+ 1265 04d0 8F93      		push r24
+ 1266               	.LCFI50:
+ 1267               		.cfi_def_cfa_offset 5
+ 1268               		.cfi_offset 24, -4
+ 1269 04d2 9F93      		push r25
+ 1270               	.LCFI51:
+ 1271               		.cfi_def_cfa_offset 6
+ 1272               		.cfi_offset 25, -5
+ 1273 04d4 EF93      		push r30
+ 1274               	.LCFI52:
+ 1275               		.cfi_def_cfa_offset 7
+ 1276               		.cfi_offset 30, -6
+ 1277 04d6 FF93      		push r31
+ 1278               	.LCFI53:
+ 1279               		.cfi_def_cfa_offset 8
+ 1280               		.cfi_offset 31, -7
+ 1281               	/* prologue: Signal */
+ 1282               	/* frame size = 0 */
+ 1283               	/* stack size = 7 */
+ 1284               	.L__stack_usage = 7
+ 1285               	.L70:
+ 296:led.c         **** 	while(!(UCSRA &(1<<RXC)));							//For SAFETY Measure
+ 1286               		.loc 1 296 0 discriminator 1
+ 1287 04d8 5F9B      		sbis 0xb,7
+ 1288 04da 00C0      		rjmp .L70
+ 297:led.c         **** 	*tempDataPtr=UDR;
+ 1289               		.loc 1 297 0
+ 1290 04dc E091 0000 		lds r30,tempDataPtr
+ 1291 04e0 F091 0000 		lds r31,tempDataPtr+1
+ 1292 04e4 8CB1      		in r24,0xc
+ 1293 04e6 8083      		st Z,r24
+ 298:led.c         **** 	tempDataPtr++;
+ 1294               		.loc 1 298 0
+ 1295 04e8 E091 0000 		lds r30,tempDataPtr
+ 1296 04ec F091 0000 		lds r31,tempDataPtr+1
+ 1297 04f0 CF01      		movw r24,r30
+ 1298 04f2 0196      		adiw r24,1
+ 1299 04f4 9093 0000 		sts tempDataPtr+1,r25
+ 1300 04f8 8093 0000 		sts tempDataPtr,r24
+ 299:led.c         **** 	if(*(tempDataPtr-1)==END_OF_SIGNAL){						//STOP CONDITION
+ 1301               		.loc 1 299 0
+ 1302 04fc 8081      		ld r24,Z
+ 1303 04fe 8D30      		cpi r24,lo8(13)
+ 1304 0500 01F4      		brne .L68
+ 300:led.c         **** 		arrangeSignalFlag=1;							//Flag will activate the processing of received data//Arranging
+ 1305               		.loc 1 300 0
+ 1306 0502 81E0      		ldi r24,lo8(1)
+ 1307 0504 90E0      		ldi r25,0
+ 1308 0506 9093 0000 		sts arrangeSignalFlag+1,r25
+ 1309 050a 8093 0000 		sts arrangeSignalFlag,r24
+ 1310               	.L68:
+ 1311               	/* epilogue start */
+ 301:led.c         **** 	}
+ 302:led.c         **** }
+ 1312               		.loc 1 302 0
+ 1313 050e FF91      		pop r31
+ 1314 0510 EF91      		pop r30
+ 1315 0512 9F91      		pop r25
+ 1316 0514 8F91      		pop r24
+ 1317 0516 0F90      		pop r0
+ 1318 0518 0FBE      		out __SREG__,r0
+ 1319 051a 0F90      		pop r0
+ 1320 051c 1F90      		pop r1
+ 1321 051e 1895      		reti
+ 1322               		.cfi_endproc
+ 1323               	.LFE18:
+ 1325               	.global	arrangeSignalFlag
+ 1326               		.section .bss
+ 1329               	arrangeSignalFlag:
+ 1330 0000 0000      		.zero	2
+ 1331               	.global	baudRate
+ 1332               		.data
+ 1335               	baudRate:
+ 1336 0000 6700      		.word	103
+ 1337               		.comm	tempDataPtr,2,1
+ 1338               	.global	tempData
+ 1339               		.section .bss
+ 1342               	tempData:
+ 1343 0002 0000 0000 		.zero	6
+ 1343      0000 
+ 1344               	.global	count
+ 1347               	count:
+ 1348 0008 0000      		.zero	2
+ 1349               	.global	flag1
+ 1350               		.data
+ 1353               	flag1:
+ 1354 0002 0100      		.word	1
+ 1355               	.global	servoStartAngle
+ 1358               	servoStartAngle:
+ 1359 0004 1900      		.word	25
+ 1360 0006 3200      		.word	50
+ 1361 0008 4B00      		.word	75
+ 1362 000a 6400      		.word	100
+ 1363 000c 7D00      		.word	125
+ 1364 000e 9600      		.word	150
+ 1365 0010 A000      		.word	160
+ 1366 0012 B300      		.word	179
+ 1367               		.comm	servoSwitchListPtr,2,1
+ 1368               		.comm	servoSwitchPtr,2,1
+ 1369               		.comm	servoSwitchPtrDup,2,1
+ 1370               		.comm	servoSwitchDup,2,1
+ 1371               		.comm	servoSwitch,2,1
+ 1372               		.comm	tempServoHead,2,1
+ 1373               		.comm	servoHead,2,1
+ 1374               		.text
+ 1375               	.Letext0:
+ 1376               		.file 3 "/usr/lib/avr/include/stdint.h"
+ 1377               		.file 4 "/usr/lib/gcc/avr/4.8.2/include/stddef.h"
+ 1378               		.file 5 "/usr/lib/avr/include/stdlib.h"
+DEFINED SYMBOLS
+                            *ABS*:0000000000000000 led.c
+     /tmp/ccoVrqKP.s:2      *ABS*:000000000000003e __SP_H__
+     /tmp/ccoVrqKP.s:3      *ABS*:000000000000003d __SP_L__
+     /tmp/ccoVrqKP.s:4      *ABS*:000000000000003f __SREG__
+     /tmp/ccoVrqKP.s:5      *ABS*:0000000000000000 __tmp_reg__
+     /tmp/ccoVrqKP.s:6      *ABS*:0000000000000001 __zero_reg__
+     /tmp/ccoVrqKP.s:12     .text:0000000000000000 CreateList
+     /tmp/ccoVrqKP.s:1358   .data:0000000000000004 servoStartAngle
+     /tmp/ccoVrqKP.s:138    .text:0000000000000076 ArrangeAngle
+                            *COM*:0000000000000002 servoSwitchPtr
+                            *COM*:0000000000000002 servoSwitchPtrDup
+     /tmp/ccoVrqKP.s:407    .text:00000000000001ac SendInteger
+     /tmp/ccoVrqKP.s:441    .text:00000000000001c2 StringToInt
+     /tmp/ccoVrqKP.s:488    .text:00000000000001e6 PrepareAddToList
+     /tmp/ccoVrqKP.s:577    .text:0000000000000250 SendList
+     /tmp/ccoVrqKP.s:649    .text:000000000000028c USARTInit
+     /tmp/ccoVrqKP.s:1335   .data:0000000000000000 baudRate
+     /tmp/ccoVrqKP.s:682    .text:00000000000002aa TimerInit
+     /tmp/ccoVrqKP.s:704    .text:00000000000002b8 ServoPortInit
+     /tmp/ccoVrqKP.s:724    .text.startup:0000000000000000 main
+                            *COM*:0000000000000002 servoSwitchListPtr
+                            *COM*:0000000000000002 tempServoHead
+                            *COM*:0000000000000002 servoSwitch
+                            *COM*:0000000000000002 servoSwitchDup
+     /tmp/ccoVrqKP.s:1342   .bss:0000000000000002 tempData
+                            *COM*:0000000000000002 tempDataPtr
+     /tmp/ccoVrqKP.s:1329   .bss:0000000000000000 arrangeSignalFlag
+     /tmp/ccoVrqKP.s:1347   .bss:0000000000000008 count
+     /tmp/ccoVrqKP.s:932    .text:00000000000002c0 __vector_6
+     /tmp/ccoVrqKP.s:1250   .text:00000000000004c6 __vector_13
+     /tmp/ccoVrqKP.s:1353   .data:0000000000000002 flag1
+                            *COM*:0000000000000002 servoHead
+
+UNDEFINED SYMBOLS
+malloc
+__floatunsisf
+__mulsf3
+__addsf3
+__fixunssfsi
+__subsf3
+__do_copy_data
+__do_clear_bss

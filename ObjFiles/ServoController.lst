@@ -1,0 +1,1982 @@
+   1               		.file	"ServoController.c"
+   2               	__SP_H__ = 0x3e
+   3               	__SP_L__ = 0x3d
+   4               	__SREG__ = 0x3f
+   5               	__tmp_reg__ = 0
+   6               	__zero_reg__ = 1
+   7               		.text
+   8               	.Ltext0:
+   9               		.cfi_sections	.debug_frame
+  10               	.global	CreateList
+  12               	CreateList:
+  13               	.LFB7:
+  14               		.file 1 "ServoController.c"
+   1:ServoController.c **** /*
+   2:ServoController.c ****  * Servo_Driver.c
+   3:ServoController.c ****  *
+   4:ServoController.c ****  * Created: 2/22/2015 1:30:51 AM
+   5:ServoController.c ****  *  Author: RahulSingh
+   6:ServoController.c ****  */ 
+   7:ServoController.c **** //*************************************************************************************************
+   8:ServoController.c **** //						DEFINES						       //
+   9:ServoController.c **** //*************************************************************************************************
+  10:ServoController.c **** #define F_CPU 			16000000UL
+  11:ServoController.c **** #define setbit(x,y) 		x |=(1<<y)
+  12:ServoController.c **** #define clearbit(x,y)  		x &=~(1<<y)
+  13:ServoController.c **** #define togglebit(x,y) 		x ^=(1<<y)
+  14:ServoController.c **** #define BAUDRATE		9600
+  15:ServoController.c **** #define UBRR_VAL		103
+  16:ServoController.c **** #define END_OF_SIGNAL		13						//ENTER KEY
+  17:ServoController.c **** 
+  18:ServoController.c **** //#define ICR_VAL 		1100
+  19:ServoController.c **** #define SERVO_NUMBER		8
+  20:ServoController.c **** #define SERVO_MIN_ANGLE 	0
+  21:ServoController.c **** 
+  22:ServoController.c **** #define SERVO_MAX_ANGLE 	180
+  23:ServoController.c **** #define ICR1_BASE_VALUE 	1100						//it is base of minimun high time of pulse typically it is 1.1 m
+  24:ServoController.c **** #define ICR1_TOP_VALUE		3999						//20 ms PULSE i.e. 50Hz frequency
+  25:ServoController.c **** #define FACTOR 			22.22						//It is evaluated as 4000/180 degree
+  26:ServoController.c **** 
+  27:ServoController.c **** //*************************************************************************************************
+  28:ServoController.c **** //					  INCLUDED LIBRARRY					       //
+  29:ServoController.c **** //*************************************************************************************************
+  30:ServoController.c **** #include <avr/io.h>
+  31:ServoController.c **** #include <avr/interrupt.h>
+  32:ServoController.c **** #include <util/delay.h>
+  33:ServoController.c **** #include <stdio.h>
+  34:ServoController.c **** #include <stdlib.h> 
+  35:ServoController.c **** #include <math.h>
+  36:ServoController.c **** 
+  37:ServoController.c **** 
+  38:ServoController.c **** //*************************************************************************************************
+  39:ServoController.c **** //	   				   GLOBAL VARIBLES					       //
+  40:ServoController.c **** //*************************************************************************************************
+  41:ServoController.c **** struct structServo{
+  42:ServoController.c **** 	uint16_t angle;
+  43:ServoController.c **** 	uint16_t number;
+  44:ServoController.c **** 	struct structServo *node;
+  45:ServoController.c **** };
+  46:ServoController.c **** 
+  47:ServoController.c **** typedef struct structServo servoList;
+  48:ServoController.c **** servoList *tempServoHead;
+  49:ServoController.c **** 
+  50:ServoController.c **** servoList *servoSwitch;
+  51:ServoController.c **** servoList *servoSwitchDup;
+  52:ServoController.c **** servoList **servoSwitchPtrDup;
+  53:ServoController.c **** servoList **servoSwitchPtr;
+  54:ServoController.c **** 
+  55:ServoController.c **** servoList **servoSwitchListPtr;
+  56:ServoController.c **** uint16_t servoStartAngle[8]={20,30,40,50,60,70,80,90};
+  57:ServoController.c **** 
+  58:ServoController.c **** int count=0;									//Counter for servo timer ISR
+  59:ServoController.c **** char tempData[6]={0,0,0,0,0,0};
+  60:ServoController.c **** char *tempDataPtr;
+  61:ServoController.c **** uint16_t baudRate=103;								//=((F_CPU/(16*BAUDRATE))-1);
+  62:ServoController.c **** int arrangeSignalFlag=0;
+  63:ServoController.c **** 
+  64:ServoController.c **** //Testing Parameters
+  65:ServoController.c **** int testcounter=0;
+  66:ServoController.c **** 
+  67:ServoController.c **** //*************************************************************************************************
+  68:ServoController.c **** //	  				 FUNCTION PROTOTYPES                     		       //
+  69:ServoController.c **** //*************************************************************************************************
+  70:ServoController.c **** void USARTInit();
+  71:ServoController.c **** servoList* ArrangeAngle(servoList *servoAngle, servoList *servoNodeHead,int num);
+  72:ServoController.c **** servoList* CreateList();
+  73:ServoController.c **** void PrepareAddToList(char *start);
+  74:ServoController.c **** uint16_t StringToInt(char *dataStart);
+  75:ServoController.c **** void SendInteger(uint16_t num);
+  76:ServoController.c **** servoList* SendList(servoList* head);
+  77:ServoController.c **** void ServoPortInit();
+  78:ServoController.c **** void TimerInit();
+  79:ServoController.c **** 
+  80:ServoController.c **** //*************************************************************************************************
+  81:ServoController.c **** //	      					FUNCTIONS 	   				       //
+  82:ServoController.c **** //*************************************************************************************************
+  83:ServoController.c **** 
+  84:ServoController.c **** servoList* CreateList()
+  85:ServoController.c **** {
+  15               		.loc 1 85 0
+  16               		.cfi_startproc
+  17 0000 CF92      		push r12
+  18               	.LCFI0:
+  19               		.cfi_def_cfa_offset 3
+  20               		.cfi_offset 12, -2
+  21 0002 DF92      		push r13
+  22               	.LCFI1:
+  23               		.cfi_def_cfa_offset 4
+  24               		.cfi_offset 13, -3
+  25 0004 EF92      		push r14
+  26               	.LCFI2:
+  27               		.cfi_def_cfa_offset 5
+  28               		.cfi_offset 14, -4
+  29 0006 FF92      		push r15
+  30               	.LCFI3:
+  31               		.cfi_def_cfa_offset 6
+  32               		.cfi_offset 15, -5
+  33 0008 0F93      		push r16
+  34               	.LCFI4:
+  35               		.cfi_def_cfa_offset 7
+  36               		.cfi_offset 16, -6
+  37 000a 1F93      		push r17
+  38               	.LCFI5:
+  39               		.cfi_def_cfa_offset 8
+  40               		.cfi_offset 17, -7
+  41 000c CF93      		push r28
+  42               	.LCFI6:
+  43               		.cfi_def_cfa_offset 9
+  44               		.cfi_offset 28, -8
+  45 000e DF93      		push r29
+  46               	.LCFI7:
+  47               		.cfi_def_cfa_offset 10
+  48               		.cfi_offset 29, -9
+  49               	/* prologue: function */
+  50               	/* frame size = 0 */
+  51               	/* stack size = 8 */
+  52               	.L__stack_usage = 8
+  53               	.LVL0:
+  54 0010 80E0      		ldi r24,lo8(servoStartAngle)
+  55 0012 C82E      		mov r12,r24
+  56 0014 80E0      		ldi r24,hi8(servoStartAngle)
+  57 0016 D82E      		mov r13,r24
+  86:ServoController.c **** 	int i;
+  87:ServoController.c **** 	servoList *head, *first, *temp = 0;
+  58               		.loc 1 87 0
+  59 0018 E12C      		mov r14,__zero_reg__
+  60 001a F12C      		mov r15,__zero_reg__
+  88:ServoController.c **** 	first = 0;
+  61               		.loc 1 88 0
+  62 001c 00E0      		ldi r16,0
+  63 001e 10E0      		ldi r17,0
+  89:ServoController.c **** 	for(i=0; i<8; i++){
+  64               		.loc 1 89 0
+  65 0020 C0E0      		ldi r28,0
+  66 0022 D0E0      		ldi r29,0
+  67               	.LVL1:
+  68               	.L4:
+  90:ServoController.c **** 		head  = (servoList*)malloc(sizeof(servoList));
+  69               		.loc 1 90 0
+  70 0024 86E0      		ldi r24,lo8(6)
+  71 0026 90E0      		ldi r25,0
+  72 0028 0E94 0000 		call malloc
+  73               	.LVL2:
+  74 002c FC01      		movw r30,r24
+  75               	.LVL3:
+  91:ServoController.c **** 		head->angle=servoStartAngle[i];
+  76               		.loc 1 91 0
+  77 002e D601      		movw r26,r12
+  78 0030 8D91      		ld r24,X+
+  79 0032 9D91      		ld r25,X+
+  80               	.LVL4:
+  81 0034 6D01      		movw r12,r26
+  82 0036 9183      		std Z+1,r25
+  83 0038 8083      		st Z,r24
+  92:ServoController.c **** 		head->number=i+1;
+  84               		.loc 1 92 0
+  85 003a 2196      		adiw r28,1
+  86               	.LVL5:
+  87 003c D383      		std Z+3,r29
+  88 003e C283      		std Z+2,r28
+  93:ServoController.c **** 		if (first != 0){
+  89               		.loc 1 93 0
+  90 0040 0115      		cp r16,__zero_reg__
+  91 0042 1105      		cpc r17,__zero_reg__
+  92 0044 01F0      		breq .L5
+  94:ServoController.c **** 			temp->node = head;
+  93               		.loc 1 94 0
+  94 0046 D701      		movw r26,r14
+  95 0048 1596      		adiw r26,4+1
+  96 004a FC93      		st X,r31
+  97 004c EE93      		st -X,r30
+  98 004e 1497      		sbiw r26,4
+  99               	.LVL6:
+ 100 0050 00C0      		rjmp .L2
+ 101               	.LVL7:
+ 102               	.L5:
+  90:ServoController.c **** 		head  = (servoList*)malloc(sizeof(servoList));
+ 103               		.loc 1 90 0
+ 104 0052 8F01      		movw r16,r30
+ 105               	.LVL8:
+ 106               	.L2:
+  89:ServoController.c **** 	for(i=0; i<8; i++){
+ 107               		.loc 1 89 0 discriminator 1
+ 108 0054 C830      		cpi r28,8
+ 109 0056 D105      		cpc r29,__zero_reg__
+ 110 0058 01F0      		breq .L3
+  90:ServoController.c **** 		head  = (servoList*)malloc(sizeof(servoList));
+ 111               		.loc 1 90 0
+ 112 005a 7F01      		movw r14,r30
+ 113 005c 00C0      		rjmp .L4
+ 114               	.L3:
+  95:ServoController.c **** 			temp = head;
+  96:ServoController.c **** 		}
+  97:ServoController.c **** 		else
+  98:ServoController.c **** 		first = temp = head;
+  99:ServoController.c **** 	}
+ 100:ServoController.c **** 	temp->node = 0;
+ 115               		.loc 1 100 0
+ 116 005e 1582      		std Z+5,__zero_reg__
+ 117 0060 1482      		std Z+4,__zero_reg__
+ 118               	.LVL9:
+ 101:ServoController.c **** 	temp = first;
+ 102:ServoController.c **** 	return first;
+ 103:ServoController.c **** }
+ 119               		.loc 1 103 0
+ 120 0062 C801      		movw r24,r16
+ 121               	/* epilogue start */
+ 122 0064 DF91      		pop r29
+ 123 0066 CF91      		pop r28
+ 124               	.LVL10:
+ 125 0068 1F91      		pop r17
+ 126 006a 0F91      		pop r16
+ 127               	.LVL11:
+ 128 006c FF90      		pop r15
+ 129 006e EF90      		pop r14
+ 130 0070 DF90      		pop r13
+ 131 0072 CF90      		pop r12
+ 132 0074 0895      		ret
+ 133               		.cfi_endproc
+ 134               	.LFE7:
+ 136               	.global	SendInteger
+ 138               	SendInteger:
+ 139               	.LFB10:
+ 104:ServoController.c **** 
+ 105:ServoController.c **** servoList* ArrangeAngle(servoList *servoAngle,servoList *nodeHead,int num)
+ 106:ServoController.c **** {
+ 107:ServoController.c **** uint32_t i=TCNT1;
+ 108:ServoController.c **** SendInteger(i);
+ 109:ServoController.c **** 	if(servoAngle->angle<=180 && servoAngle->number<=8){
+ 110:ServoController.c **** 		servoList *servoNode,*servoPreviousNode;
+ 111:ServoController.c **** 		servoNode = nodeHead;
+ 112:ServoController.c **** 		servoPreviousNode=nodeHead;							
+ 113:ServoController.c **** 		int flagAngle=0;
+ 114:ServoController.c **** 		int flagNumber=0;
+ 115:ServoController.c **** 
+ 116:ServoController.c **** 		if(servoAngle->number == nodeHead->number){
+ 117:ServoController.c **** //Check the difference between *servoSwitchPtr=servoNodeHead and servoSwitchPtr=&servoNodeHead;
+ 118:ServoController.c **** //It does not work with servoSwitchPtr=&nodeHead;
+ 119:ServoController.c **** 		if(num==1)
+ 120:ServoController.c **** 			*servoSwitchPtr=nodeHead;
+ 121:ServoController.c **** 		else
+ 122:ServoController.c **** 			*servoSwitchPtrDup=nodeHead;
+ 123:ServoController.c **** 			nodeHead=servoNode->node;
+ 124:ServoController.c **** 			flagNumber=1;
+ 125:ServoController.c **** 		}
+ 126:ServoController.c **** 		if(servoAngle->angle <= nodeHead->angle){
+ 127:ServoController.c **** 			servoAngle->node=nodeHead;
+ 128:ServoController.c **** 			nodeHead=servoAngle;
+ 129:ServoController.c **** 			servoPreviousNode=servoAngle;
+ 130:ServoController.c **** 			flagAngle=1;
+ 131:ServoController.c **** 		} 
+ 132:ServoController.c **** 		while(servoNode !=NULL){
+ 133:ServoController.c **** 			if((servoAngle->angle <= servoNode->angle)&& flagAngle !=1){
+ 134:ServoController.c **** 				servoPreviousNode->node=servoAngle;
+ 135:ServoController.c **** 				servoAngle->node=servoNode;
+ 136:ServoController.c **** 				servoPreviousNode=servoAngle;
+ 137:ServoController.c **** 				flagAngle=1;
+ 138:ServoController.c **** 			}
+ 139:ServoController.c **** 			if((servoAngle->number==servoNode->number)&& flagNumber!=1){
+ 140:ServoController.c **** 				if(num==1)
+ 141:ServoController.c **** 					*servoSwitchPtr=servoNode;
+ 142:ServoController.c **** 				else
+ 143:ServoController.c **** 					*servoSwitchPtrDup=servoNode;
+ 144:ServoController.c **** 				servoPreviousNode->node=servoNode->node;
+ 145:ServoController.c **** 				flagNumber=1;
+ 146:ServoController.c **** 			}
+ 147:ServoController.c **** 			servoPreviousNode=(servoAngle->number==servoNode->number)? servoPreviousNode:servoNode;
+ 148:ServoController.c **** 			servoNode=servoNode->node;		
+ 149:ServoController.c **** 		}
+ 150:ServoController.c **** 		if(flagAngle==0){	
+ 151:ServoController.c **** 			servoPreviousNode->node=servoAngle;
+ 152:ServoController.c **** 			servoAngle->node=NULL;
+ 153:ServoController.c **** 		}
+ 154:ServoController.c **** i=TCNT1;
+ 155:ServoController.c **** SendInteger(i);
+ 156:ServoController.c **** 		return nodeHead;
+ 157:ServoController.c **** 	}
+ 158:ServoController.c **** 	else{
+ 159:ServoController.c **** i=TCNT1;
+ 160:ServoController.c **** SendInteger(i);
+ 161:ServoController.c **** 		return nodeHead;
+ 162:ServoController.c **** 	}		
+ 163:ServoController.c **** }
+ 164:ServoController.c **** 
+ 165:ServoController.c **** void PrepareAddToList(char *start)
+ 166:ServoController.c **** {
+ 167:ServoController.c **** 	(*servoSwitchPtr)->number=(*start-48);
+ 168:ServoController.c **** 	(*servoSwitchPtr)->angle=StringToInt(start+1);
+ 169:ServoController.c **** 	(*servoSwitchPtrDup)->number=(*start-48);
+ 170:ServoController.c **** 	(*servoSwitchPtrDup)->angle=StringToInt(start+1);
+ 171:ServoController.c **** }
+ 172:ServoController.c **** 
+ 173:ServoController.c **** void SendInteger(uint16_t num)
+ 174:ServoController.c **** {
+ 140               		.loc 1 174 0
+ 141               		.cfi_startproc
+ 142               	.LVL12:
+ 143               	/* prologue: function */
+ 144               	/* frame size = 0 */
+ 145               	/* stack size = 0 */
+ 146               	.L__stack_usage = 0
+ 147               	.LBB6:
+ 148               	.LBB7:
+ 149               		.file 2 "/usr/lib/avr/include/util/delay.h"
+   1:/usr/lib/avr/include/util/delay.h **** /* Copyright (c) 2002, Marek Michalkiewicz
+   2:/usr/lib/avr/include/util/delay.h ****    Copyright (c) 2004,2005,2007 Joerg Wunsch
+   3:/usr/lib/avr/include/util/delay.h ****    Copyright (c) 2007  Florin-Viorel Petrov
+   4:/usr/lib/avr/include/util/delay.h ****    All rights reserved.
+   5:/usr/lib/avr/include/util/delay.h **** 
+   6:/usr/lib/avr/include/util/delay.h ****    Redistribution and use in source and binary forms, with or without
+   7:/usr/lib/avr/include/util/delay.h ****    modification, are permitted provided that the following conditions are met:
+   8:/usr/lib/avr/include/util/delay.h **** 
+   9:/usr/lib/avr/include/util/delay.h ****    * Redistributions of source code must retain the above copyright
+  10:/usr/lib/avr/include/util/delay.h ****      notice, this list of conditions and the following disclaimer.
+  11:/usr/lib/avr/include/util/delay.h **** 
+  12:/usr/lib/avr/include/util/delay.h ****    * Redistributions in binary form must reproduce the above copyright
+  13:/usr/lib/avr/include/util/delay.h ****      notice, this list of conditions and the following disclaimer in
+  14:/usr/lib/avr/include/util/delay.h ****      the documentation and/or other materials provided with the
+  15:/usr/lib/avr/include/util/delay.h ****      distribution.
+  16:/usr/lib/avr/include/util/delay.h **** 
+  17:/usr/lib/avr/include/util/delay.h ****    * Neither the name of the copyright holders nor the names of
+  18:/usr/lib/avr/include/util/delay.h ****      contributors may be used to endorse or promote products derived
+  19:/usr/lib/avr/include/util/delay.h ****      from this software without specific prior written permission.
+  20:/usr/lib/avr/include/util/delay.h **** 
+  21:/usr/lib/avr/include/util/delay.h ****   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+  22:/usr/lib/avr/include/util/delay.h ****   AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+  23:/usr/lib/avr/include/util/delay.h ****   IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+  24:/usr/lib/avr/include/util/delay.h ****   ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
+  25:/usr/lib/avr/include/util/delay.h ****   LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+  26:/usr/lib/avr/include/util/delay.h ****   CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+  27:/usr/lib/avr/include/util/delay.h ****   SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+  28:/usr/lib/avr/include/util/delay.h ****   INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+  29:/usr/lib/avr/include/util/delay.h ****   CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+  30:/usr/lib/avr/include/util/delay.h ****   ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+  31:/usr/lib/avr/include/util/delay.h ****   POSSIBILITY OF SUCH DAMAGE. */
+  32:/usr/lib/avr/include/util/delay.h **** 
+  33:/usr/lib/avr/include/util/delay.h **** /* $Id: delay.h.in 2251 2011-09-14 08:20:33Z joerg_wunsch $ */
+  34:/usr/lib/avr/include/util/delay.h **** 
+  35:/usr/lib/avr/include/util/delay.h **** #ifndef _UTIL_DELAY_H_
+  36:/usr/lib/avr/include/util/delay.h **** #define _UTIL_DELAY_H_ 1
+  37:/usr/lib/avr/include/util/delay.h **** 
+  38:/usr/lib/avr/include/util/delay.h **** #ifndef __HAS_DELAY_CYCLES
+  39:/usr/lib/avr/include/util/delay.h **** #define __HAS_DELAY_CYCLES 1
+  40:/usr/lib/avr/include/util/delay.h **** #endif
+  41:/usr/lib/avr/include/util/delay.h **** 
+  42:/usr/lib/avr/include/util/delay.h **** #include <inttypes.h>
+  43:/usr/lib/avr/include/util/delay.h **** #include <util/delay_basic.h>
+  44:/usr/lib/avr/include/util/delay.h **** #include <math.h>
+  45:/usr/lib/avr/include/util/delay.h **** 
+  46:/usr/lib/avr/include/util/delay.h **** /** \file */
+  47:/usr/lib/avr/include/util/delay.h **** /** \defgroup util_delay <util/delay.h>: Convenience functions for busy-wait delay loops
+  48:/usr/lib/avr/include/util/delay.h ****     \code
+  49:/usr/lib/avr/include/util/delay.h ****     #define F_CPU 1000000UL  // 1 MHz
+  50:/usr/lib/avr/include/util/delay.h ****     //#define F_CPU 14.7456E6
+  51:/usr/lib/avr/include/util/delay.h ****     #include <util/delay.h>
+  52:/usr/lib/avr/include/util/delay.h ****     \endcode
+  53:/usr/lib/avr/include/util/delay.h **** 
+  54:/usr/lib/avr/include/util/delay.h ****     \note As an alternative method, it is possible to pass the
+  55:/usr/lib/avr/include/util/delay.h ****     F_CPU macro down to the compiler from the Makefile.
+  56:/usr/lib/avr/include/util/delay.h ****     Obviously, in that case, no \c \#define statement should be
+  57:/usr/lib/avr/include/util/delay.h ****     used.
+  58:/usr/lib/avr/include/util/delay.h **** 
+  59:/usr/lib/avr/include/util/delay.h ****     The functions in this header file are wrappers around the basic
+  60:/usr/lib/avr/include/util/delay.h ****     busy-wait functions from <util/delay_basic.h>.  They are meant as
+  61:/usr/lib/avr/include/util/delay.h ****     convenience functions where actual time values can be specified
+  62:/usr/lib/avr/include/util/delay.h ****     rather than a number of cycles to wait for.  The idea behind is
+  63:/usr/lib/avr/include/util/delay.h ****     that compile-time constant expressions will be eliminated by
+  64:/usr/lib/avr/include/util/delay.h ****     compiler optimization so floating-point expressions can be used
+  65:/usr/lib/avr/include/util/delay.h ****     to calculate the number of delay cycles needed based on the CPU
+  66:/usr/lib/avr/include/util/delay.h ****     frequency passed by the macro F_CPU.
+  67:/usr/lib/avr/include/util/delay.h **** 
+  68:/usr/lib/avr/include/util/delay.h ****     \note In order for these functions to work as intended, compiler
+  69:/usr/lib/avr/include/util/delay.h ****     optimizations <em>must</em> be enabled, and the delay time
+  70:/usr/lib/avr/include/util/delay.h ****     <em>must</em> be an expression that is a known constant at
+  71:/usr/lib/avr/include/util/delay.h ****     compile-time.  If these requirements are not met, the resulting
+  72:/usr/lib/avr/include/util/delay.h ****     delay will be much longer (and basically unpredictable), and
+  73:/usr/lib/avr/include/util/delay.h ****     applications that otherwise do not use floating-point calculations
+  74:/usr/lib/avr/include/util/delay.h ****     will experience severe code bloat by the floating-point library
+  75:/usr/lib/avr/include/util/delay.h ****     routines linked into the application.
+  76:/usr/lib/avr/include/util/delay.h **** 
+  77:/usr/lib/avr/include/util/delay.h ****     The functions available allow the specification of microsecond, and
+  78:/usr/lib/avr/include/util/delay.h ****     millisecond delays directly, using the application-supplied macro
+  79:/usr/lib/avr/include/util/delay.h ****     F_CPU as the CPU clock frequency (in Hertz).
+  80:/usr/lib/avr/include/util/delay.h **** 
+  81:/usr/lib/avr/include/util/delay.h **** */
+  82:/usr/lib/avr/include/util/delay.h **** 
+  83:/usr/lib/avr/include/util/delay.h **** #if !defined(__DOXYGEN__)
+  84:/usr/lib/avr/include/util/delay.h **** static inline void _delay_us(double __us) __attribute__((always_inline));
+  85:/usr/lib/avr/include/util/delay.h **** static inline void _delay_ms(double __ms) __attribute__((always_inline));
+  86:/usr/lib/avr/include/util/delay.h **** #endif
+  87:/usr/lib/avr/include/util/delay.h **** 
+  88:/usr/lib/avr/include/util/delay.h **** #ifndef F_CPU
+  89:/usr/lib/avr/include/util/delay.h **** /* prevent compiler error by supplying a default */
+  90:/usr/lib/avr/include/util/delay.h **** # warning "F_CPU not defined for <util/delay.h>"
+  91:/usr/lib/avr/include/util/delay.h **** # define F_CPU 1000000UL
+  92:/usr/lib/avr/include/util/delay.h **** #endif
+  93:/usr/lib/avr/include/util/delay.h **** 
+  94:/usr/lib/avr/include/util/delay.h **** #ifndef __OPTIMIZE__
+  95:/usr/lib/avr/include/util/delay.h **** # warning "Compiler optimizations disabled; functions from <util/delay.h> won't work as designed"
+  96:/usr/lib/avr/include/util/delay.h **** #endif
+  97:/usr/lib/avr/include/util/delay.h **** 
+  98:/usr/lib/avr/include/util/delay.h **** #if __HAS_DELAY_CYCLES && defined(__OPTIMIZE__) && \
+  99:/usr/lib/avr/include/util/delay.h ****   !defined(__DELAY_BACKWARD_COMPATIBLE__) &&	   \
+ 100:/usr/lib/avr/include/util/delay.h ****   __STDC_HOSTED__
+ 101:/usr/lib/avr/include/util/delay.h **** #  include <math.h>
+ 102:/usr/lib/avr/include/util/delay.h **** #endif
+ 103:/usr/lib/avr/include/util/delay.h **** 
+ 104:/usr/lib/avr/include/util/delay.h **** /**
+ 105:/usr/lib/avr/include/util/delay.h ****    \ingroup util_delay
+ 106:/usr/lib/avr/include/util/delay.h **** 
+ 107:/usr/lib/avr/include/util/delay.h ****    Perform a delay of \c __ms milliseconds, using _delay_loop_2().
+ 108:/usr/lib/avr/include/util/delay.h **** 
+ 109:/usr/lib/avr/include/util/delay.h ****    The macro F_CPU is supposed to be defined to a
+ 110:/usr/lib/avr/include/util/delay.h ****    constant defining the CPU clock frequency (in Hertz).
+ 111:/usr/lib/avr/include/util/delay.h **** 
+ 112:/usr/lib/avr/include/util/delay.h ****    The maximal possible delay is 262.14 ms / F_CPU in MHz.
+ 113:/usr/lib/avr/include/util/delay.h **** 
+ 114:/usr/lib/avr/include/util/delay.h ****    When the user request delay which exceed the maximum possible one,
+ 115:/usr/lib/avr/include/util/delay.h ****    _delay_ms() provides a decreased resolution functionality. In this
+ 116:/usr/lib/avr/include/util/delay.h ****    mode _delay_ms() will work with a resolution of 1/10 ms, providing
+ 117:/usr/lib/avr/include/util/delay.h ****    delays up to 6.5535 seconds (independent from CPU frequency).  The
+ 118:/usr/lib/avr/include/util/delay.h ****    user will not be informed about decreased resolution.
+ 119:/usr/lib/avr/include/util/delay.h **** 
+ 120:/usr/lib/avr/include/util/delay.h ****    If the avr-gcc toolchain has __builtin_avr_delay_cycles(unsigned long)
+ 121:/usr/lib/avr/include/util/delay.h ****    support, maximal possible delay is 4294967.295 ms/ F_CPU in MHz. For
+ 122:/usr/lib/avr/include/util/delay.h ****    values greater than the maximal possible delay, overflows results in
+ 123:/usr/lib/avr/include/util/delay.h ****    no delay i.e., 0ms.
+ 124:/usr/lib/avr/include/util/delay.h **** 
+ 125:/usr/lib/avr/include/util/delay.h ****    Conversion of __us into clock cycles may not always result in integer.
+ 126:/usr/lib/avr/include/util/delay.h ****    By default, the clock cycles rounded up to next integer. This ensures that
+ 127:/usr/lib/avr/include/util/delay.h ****    the user gets atleast __us microseconds of delay.
+ 128:/usr/lib/avr/include/util/delay.h **** 
+ 129:/usr/lib/avr/include/util/delay.h ****    Alternatively, user can define __DELAY_ROUND_DOWN__ and __DELAY_ROUND_CLOSEST__
+ 130:/usr/lib/avr/include/util/delay.h ****    to round down and round to closest integer.
+ 131:/usr/lib/avr/include/util/delay.h **** 
+ 132:/usr/lib/avr/include/util/delay.h ****    Note: The new implementation of _delay_ms(double __ms) with 
+ 133:/usr/lib/avr/include/util/delay.h ****     __builtin_avr_delay_cycles(unsigned long) support is not backward compatible. 
+ 134:/usr/lib/avr/include/util/delay.h ****    User can define __DELAY_BACKWARD_COMPATIBLE__ to get a backward compatible delay.
+ 135:/usr/lib/avr/include/util/delay.h ****    Also, the backward compatible
+ 136:/usr/lib/avr/include/util/delay.h ****    algorithm will be chosen if the code is compiled in a <em>freestanding
+ 137:/usr/lib/avr/include/util/delay.h ****    environment</em> (GCC option \c -ffreestanding), as the math functions
+ 138:/usr/lib/avr/include/util/delay.h ****    required for rounding are not available to the compiler then.
+ 139:/usr/lib/avr/include/util/delay.h **** 
+ 140:/usr/lib/avr/include/util/delay.h ****  */
+ 141:/usr/lib/avr/include/util/delay.h **** void
+ 142:/usr/lib/avr/include/util/delay.h **** _delay_ms(double __ms)
+ 143:/usr/lib/avr/include/util/delay.h **** {
+ 144:/usr/lib/avr/include/util/delay.h **** 	uint16_t __ticks;
+ 145:/usr/lib/avr/include/util/delay.h **** 	double __tmp ; 
+ 146:/usr/lib/avr/include/util/delay.h **** #if __HAS_DELAY_CYCLES && defined(__OPTIMIZE__) && \
+ 147:/usr/lib/avr/include/util/delay.h ****   !defined(__DELAY_BACKWARD_COMPATIBLE__) &&	   \
+ 148:/usr/lib/avr/include/util/delay.h ****   __STDC_HOSTED__
+ 149:/usr/lib/avr/include/util/delay.h **** 	uint32_t __ticks_dc;
+ 150:/usr/lib/avr/include/util/delay.h **** 	extern void __builtin_avr_delay_cycles(unsigned long);
+ 151:/usr/lib/avr/include/util/delay.h **** 	__tmp = ((F_CPU) / 1e3) * __ms;
+ 152:/usr/lib/avr/include/util/delay.h **** 
+ 153:/usr/lib/avr/include/util/delay.h **** 	#if defined(__DELAY_ROUND_DOWN__)
+ 154:/usr/lib/avr/include/util/delay.h **** 		__ticks_dc = (uint32_t)fabs(__tmp);
+ 155:/usr/lib/avr/include/util/delay.h **** 
+ 156:/usr/lib/avr/include/util/delay.h **** 	#elif defined(__DELAY_ROUND_CLOSEST__)
+ 157:/usr/lib/avr/include/util/delay.h **** 		__ticks_dc = (uint32_t)(fabs(__tmp)+0.5);
+ 158:/usr/lib/avr/include/util/delay.h **** 
+ 159:/usr/lib/avr/include/util/delay.h **** 	#else
+ 160:/usr/lib/avr/include/util/delay.h **** 		//round up by default
+ 161:/usr/lib/avr/include/util/delay.h **** 		__ticks_dc = (uint32_t)(ceil(fabs(__tmp)));
+ 162:/usr/lib/avr/include/util/delay.h **** 	#endif
+ 163:/usr/lib/avr/include/util/delay.h **** 
+ 164:/usr/lib/avr/include/util/delay.h **** 	__builtin_avr_delay_cycles(__ticks_dc);
+ 150               		.loc 2 164 0
+ 151 0076 EFE3      		ldi r30,lo8(-25537)
+ 152 0078 FCE9      		ldi r31,hi8(-25537)
+ 153 007a 3197      		1: sbiw r30,1
+ 154 007c 01F4      		brne 1b
+ 155 007e 00C0      		rjmp .
+ 156 0080 0000      		nop
+ 157               	.L9:
+ 158               	.LBE7:
+ 159               	.LBE6:
+ 175:ServoController.c **** 	_delay_ms(10);
+ 176:ServoController.c **** 	while(!(UCSRA && (1<<UDRE)));
+ 160               		.loc 1 176 0 discriminator 1
+ 161 0082 9BB1      		in r25,0xb
+ 162 0084 9923      		tst r25
+ 163 0086 01F0      		breq .L9
+ 177:ServoController.c **** 	UDR=num;
+ 164               		.loc 1 177 0
+ 165 0088 8CB9      		out 0xc,r24
+ 166 008a 0895      		ret
+ 167               		.cfi_endproc
+ 168               	.LFE10:
+ 170               	.global	ArrangeAngle
+ 172               	ArrangeAngle:
+ 173               	.LFB8:
+ 106:ServoController.c **** {
+ 174               		.loc 1 106 0
+ 175               		.cfi_startproc
+ 176               	.LVL13:
+ 177 008c CF92      		push r12
+ 178               	.LCFI8:
+ 179               		.cfi_def_cfa_offset 3
+ 180               		.cfi_offset 12, -2
+ 181 008e DF92      		push r13
+ 182               	.LCFI9:
+ 183               		.cfi_def_cfa_offset 4
+ 184               		.cfi_offset 13, -3
+ 185 0090 EF92      		push r14
+ 186               	.LCFI10:
+ 187               		.cfi_def_cfa_offset 5
+ 188               		.cfi_offset 14, -4
+ 189 0092 FF92      		push r15
+ 190               	.LCFI11:
+ 191               		.cfi_def_cfa_offset 6
+ 192               		.cfi_offset 15, -5
+ 193 0094 0F93      		push r16
+ 194               	.LCFI12:
+ 195               		.cfi_def_cfa_offset 7
+ 196               		.cfi_offset 16, -6
+ 197 0096 1F93      		push r17
+ 198               	.LCFI13:
+ 199               		.cfi_def_cfa_offset 8
+ 200               		.cfi_offset 17, -7
+ 201 0098 CF93      		push r28
+ 202               	.LCFI14:
+ 203               		.cfi_def_cfa_offset 9
+ 204               		.cfi_offset 28, -8
+ 205 009a DF93      		push r29
+ 206               	.LCFI15:
+ 207               		.cfi_def_cfa_offset 10
+ 208               		.cfi_offset 29, -9
+ 209               	/* prologue: function */
+ 210               	/* frame size = 0 */
+ 211               	/* stack size = 8 */
+ 212               	.L__stack_usage = 8
+ 213 009c 8C01      		movw r16,r24
+ 214 009e EB01      		movw r28,r22
+ 215 00a0 6A01      		movw r12,r20
+ 107:ServoController.c **** uint32_t i=TCNT1;
+ 216               		.loc 1 107 0
+ 217 00a2 8CB5      		in r24,0x2c
+ 218 00a4 9DB5      		in r25,0x2c+1
+ 219               	.LVL14:
+ 108:ServoController.c **** SendInteger(i);
+ 220               		.loc 1 108 0
+ 221 00a6 0E94 0000 		call SendInteger
+ 222               	.LVL15:
+ 109:ServoController.c **** 	if(servoAngle->angle<=180 && servoAngle->number<=8){
+ 223               		.loc 1 109 0
+ 224 00aa F801      		movw r30,r16
+ 225 00ac 6081      		ld r22,Z
+ 226 00ae 7181      		ldd r23,Z+1
+ 227 00b0 653B      		cpi r22,-75
+ 228 00b2 7105      		cpc r23,__zero_reg__
+ 229 00b4 00F0      		brlo .+2
+ 230 00b6 00C0      		rjmp .L11
+ 109:ServoController.c **** 	if(servoAngle->angle<=180 && servoAngle->number<=8){
+ 231               		.loc 1 109 0 is_stmt 0 discriminator 1
+ 232 00b8 4281      		ldd r20,Z+2
+ 233 00ba 5381      		ldd r21,Z+3
+ 234 00bc 4930      		cpi r20,9
+ 235 00be 5105      		cpc r21,__zero_reg__
+ 236 00c0 00F0      		brlo .+2
+ 237 00c2 00C0      		rjmp .L11
+ 238               	.LVL16:
+ 239               	.LBB8:
+ 116:ServoController.c **** 		if(servoAngle->number == nodeHead->number){
+ 240               		.loc 1 116 0 is_stmt 1
+ 241 00c4 8A81      		ldd r24,Y+2
+ 242 00c6 9B81      		ldd r25,Y+3
+ 243 00c8 4817      		cp r20,r24
+ 244 00ca 5907      		cpc r21,r25
+ 245 00cc 01F4      		brne .L25
+ 119:ServoController.c **** 		if(num==1)
+ 246               		.loc 1 119 0
+ 247 00ce F1E0      		ldi r31,1
+ 248 00d0 CF16      		cp r12,r31
+ 249 00d2 D104      		cpc r13,__zero_reg__
+ 250 00d4 01F4      		brne .L13
+ 120:ServoController.c **** 			*servoSwitchPtr=nodeHead;
+ 251               		.loc 1 120 0
+ 252 00d6 E091 0000 		lds r30,servoSwitchPtr
+ 253 00da F091 0000 		lds r31,servoSwitchPtr+1
+ 254 00de 00C0      		rjmp .L35
+ 255               	.L13:
+ 122:ServoController.c **** 			*servoSwitchPtrDup=nodeHead;
+ 256               		.loc 1 122 0
+ 257 00e0 E091 0000 		lds r30,servoSwitchPtrDup
+ 258 00e4 F091 0000 		lds r31,servoSwitchPtrDup+1
+ 259               	.L35:
+ 260 00e8 D183      		std Z+1,r29
+ 261 00ea C083      		st Z,r28
+ 123:ServoController.c **** 			nodeHead=servoNode->node;
+ 262               		.loc 1 123 0
+ 263 00ec EC80      		ldd r14,Y+4
+ 264 00ee FD80      		ldd r15,Y+5
+ 265               	.LVL17:
+ 124:ServoController.c **** 			flagNumber=1;
+ 266               		.loc 1 124 0
+ 267 00f0 21E0      		ldi r18,lo8(1)
+ 268 00f2 30E0      		ldi r19,0
+ 269 00f4 00C0      		rjmp .L12
+ 270               	.LVL18:
+ 271               	.L25:
+ 272 00f6 7E01      		movw r14,r28
+ 114:ServoController.c **** 		int flagNumber=0;
+ 273               		.loc 1 114 0
+ 274 00f8 20E0      		ldi r18,0
+ 275 00fa 30E0      		ldi r19,0
+ 276               	.LVL19:
+ 277               	.L12:
+ 126:ServoController.c **** 		if(servoAngle->angle <= nodeHead->angle){
+ 278               		.loc 1 126 0
+ 279 00fc F701      		movw r30,r14
+ 280 00fe 8081      		ld r24,Z
+ 281 0100 9181      		ldd r25,Z+1
+ 282 0102 8617      		cp r24,r22
+ 283 0104 9707      		cpc r25,r23
+ 284 0106 00F0      		brlo .L26
+ 127:ServoController.c **** 			servoAngle->node=nodeHead;
+ 285               		.loc 1 127 0
+ 286 0108 F801      		movw r30,r16
+ 287 010a F582      		std Z+5,r15
+ 288 010c E482      		std Z+4,r14
+ 289               	.LVL20:
+ 128:ServoController.c **** 			nodeHead=servoAngle;
+ 290               		.loc 1 128 0
+ 291 010e 7801      		movw r14,r16
+ 130:ServoController.c **** 			flagAngle=1;
+ 292               		.loc 1 130 0
+ 293 0110 81E0      		ldi r24,lo8(1)
+ 294 0112 90E0      		ldi r25,0
+ 295 0114 00C0      		rjmp .L16
+ 296               	.LVL21:
+ 297               	.L26:
+ 112:ServoController.c **** 		servoPreviousNode=nodeHead;							
+ 298               		.loc 1 112 0
+ 299 0116 FE01      		movw r30,r28
+ 113:ServoController.c **** 		int flagAngle=0;
+ 300               		.loc 1 113 0
+ 301 0118 80E0      		ldi r24,0
+ 302 011a 90E0      		ldi r25,0
+ 303 011c 00C0      		rjmp .L16
+ 304               	.LVL22:
+ 305               	.L22:
+ 133:ServoController.c **** 			if((servoAngle->angle <= servoNode->angle)&& flagAngle !=1){
+ 306               		.loc 1 133 0
+ 307 011e A881      		ld r26,Y
+ 308 0120 B981      		ldd r27,Y+1
+ 309 0122 A617      		cp r26,r22
+ 310 0124 B707      		cpc r27,r23
+ 311 0126 00F4      		brsh .L37
+ 312               	.LVL23:
+ 313               	.L17:
+ 139:ServoController.c **** 			if((servoAngle->number==servoNode->number)&& flagNumber!=1){
+ 314               		.loc 1 139 0
+ 315 0128 AA81      		ldd r26,Y+2
+ 316 012a BB81      		ldd r27,Y+3
+ 317 012c 4A17      		cp r20,r26
+ 318 012e 5B07      		cpc r21,r27
+ 319 0130 01F0      		breq .L38
+ 320 0132 FE01      		movw r30,r28
+ 321               	.LVL24:
+ 322               	.L18:
+ 148:ServoController.c **** 			servoNode=servoNode->node;		
+ 323               		.loc 1 148 0 discriminator 3
+ 324 0134 0C80      		ldd __tmp_reg__,Y+4
+ 325 0136 DD81      		ldd r29,Y+5
+ 326 0138 C02D      		mov r28,__tmp_reg__
+ 327               	.LVL25:
+ 328               	.L16:
+ 132:ServoController.c **** 		while(servoNode !=NULL){
+ 329               		.loc 1 132 0 discriminator 1
+ 330 013a 2097      		sbiw r28,0
+ 331 013c 01F4      		brne .L22
+ 332 013e 00C0      		rjmp .L39
+ 333               	.L37:
+ 133:ServoController.c **** 			if((servoAngle->angle <= servoNode->angle)&& flagAngle !=1){
+ 334               		.loc 1 133 0 discriminator 1
+ 335 0140 8130      		cpi r24,1
+ 336 0142 9105      		cpc r25,__zero_reg__
+ 337 0144 01F0      		breq .L17
+ 134:ServoController.c **** 				servoPreviousNode->node=servoAngle;
+ 338               		.loc 1 134 0
+ 339 0146 1583      		std Z+5,r17
+ 340 0148 0483      		std Z+4,r16
+ 135:ServoController.c **** 				servoAngle->node=servoNode;
+ 341               		.loc 1 135 0
+ 342 014a F801      		movw r30,r16
+ 343               	.LVL26:
+ 344 014c D583      		std Z+5,r29
+ 345 014e C483      		std Z+4,r28
+ 346               	.LVL27:
+ 137:ServoController.c **** 				flagAngle=1;
+ 347               		.loc 1 137 0
+ 348 0150 81E0      		ldi r24,lo8(1)
+ 349 0152 90E0      		ldi r25,0
+ 350 0154 00C0      		rjmp .L17
+ 351               	.LVL28:
+ 352               	.L38:
+ 139:ServoController.c **** 			if((servoAngle->number==servoNode->number)&& flagNumber!=1){
+ 353               		.loc 1 139 0 discriminator 1
+ 354 0156 2130      		cpi r18,1
+ 355 0158 3105      		cpc r19,__zero_reg__
+ 356 015a 01F0      		breq .L19
+ 140:ServoController.c **** 				if(num==1)
+ 357               		.loc 1 140 0
+ 358 015c 21E0      		ldi r18,1
+ 359 015e C216      		cp r12,r18
+ 360 0160 D104      		cpc r13,__zero_reg__
+ 361               	.LVL29:
+ 362 0162 01F4      		brne .L20
+ 141:ServoController.c **** 					*servoSwitchPtr=servoNode;
+ 363               		.loc 1 141 0
+ 364 0164 A091 0000 		lds r26,servoSwitchPtr
+ 365 0168 B091 0000 		lds r27,servoSwitchPtr+1
+ 366 016c 00C0      		rjmp .L36
+ 367               	.L20:
+ 143:ServoController.c **** 					*servoSwitchPtrDup=servoNode;
+ 368               		.loc 1 143 0
+ 369 016e A091 0000 		lds r26,servoSwitchPtrDup
+ 370 0172 B091 0000 		lds r27,servoSwitchPtrDup+1
+ 371               	.L36:
+ 372 0176 CD93      		st X+,r28
+ 373 0178 DC93      		st X,r29
+ 144:ServoController.c **** 				servoPreviousNode->node=servoNode->node;
+ 374               		.loc 1 144 0
+ 375 017a 2C81      		ldd r18,Y+4
+ 376 017c 3D81      		ldd r19,Y+5
+ 377 017e 3583      		std Z+5,r19
+ 378 0180 2483      		std Z+4,r18
+ 379               	.LVL30:
+ 380 0182 00C0      		rjmp .L19
+ 381               	.LVL31:
+ 382               	.L39:
+ 150:ServoController.c **** 		if(flagAngle==0){	
+ 383               		.loc 1 150 0
+ 384 0184 892B      		or r24,r25
+ 385 0186 01F4      		brne .L23
+ 151:ServoController.c **** 			servoPreviousNode->node=servoAngle;
+ 386               		.loc 1 151 0
+ 387 0188 1583      		std Z+5,r17
+ 388 018a 0483      		std Z+4,r16
+ 152:ServoController.c **** 			servoAngle->node=NULL;
+ 389               		.loc 1 152 0
+ 390 018c F801      		movw r30,r16
+ 391               	.LVL32:
+ 392 018e 1582      		std Z+5,__zero_reg__
+ 393 0190 1482      		std Z+4,__zero_reg__
+ 394               	.L23:
+ 154:ServoController.c **** i=TCNT1;
+ 395               		.loc 1 154 0
+ 396 0192 8CB5      		in r24,0x2c
+ 397 0194 9DB5      		in r25,0x2c+1
+ 398               	.LVL33:
+ 155:ServoController.c **** SendInteger(i);
+ 399               		.loc 1 155 0
+ 400 0196 0E94 0000 		call SendInteger
+ 401               	.LVL34:
+ 156:ServoController.c **** 		return nodeHead;
+ 402               		.loc 1 156 0
+ 403 019a E701      		movw r28,r14
+ 404               	.LVL35:
+ 405 019c 00C0      		rjmp .L34
+ 406               	.LVL36:
+ 407               	.L11:
+ 408               	.LBE8:
+ 159:ServoController.c **** i=TCNT1;
+ 409               		.loc 1 159 0
+ 410 019e 8CB5      		in r24,0x2c
+ 411 01a0 9DB5      		in r25,0x2c+1
+ 412               	.LVL37:
+ 160:ServoController.c **** SendInteger(i);
+ 413               		.loc 1 160 0
+ 414 01a2 0E94 0000 		call SendInteger
+ 415               	.LVL38:
+ 161:ServoController.c **** 		return nodeHead;
+ 416               		.loc 1 161 0
+ 417 01a6 00C0      		rjmp .L34
+ 418               	.LVL39:
+ 419               	.L19:
+ 420               	.LBB9:
+ 137:ServoController.c **** 				flagAngle=1;
+ 421               		.loc 1 137 0
+ 422 01a8 21E0      		ldi r18,lo8(1)
+ 423 01aa 30E0      		ldi r19,0
+ 424 01ac 00C0      		rjmp .L18
+ 425               	.LVL40:
+ 426               	.L34:
+ 427               	.LBE9:
+ 163:ServoController.c **** }
+ 428               		.loc 1 163 0
+ 429 01ae CE01      		movw r24,r28
+ 430               	/* epilogue start */
+ 431 01b0 DF91      		pop r29
+ 432 01b2 CF91      		pop r28
+ 433               	.LVL41:
+ 434 01b4 1F91      		pop r17
+ 435 01b6 0F91      		pop r16
+ 436               	.LVL42:
+ 437 01b8 FF90      		pop r15
+ 438 01ba EF90      		pop r14
+ 439 01bc DF90      		pop r13
+ 440 01be CF90      		pop r12
+ 441               	.LVL43:
+ 442 01c0 0895      		ret
+ 443               		.cfi_endproc
+ 444               	.LFE8:
+ 446               	.global	StringToInt
+ 448               	StringToInt:
+ 449               	.LFB11:
+ 178:ServoController.c **** }
+ 179:ServoController.c **** 
+ 180:ServoController.c **** uint16_t StringToInt(char *dataStart)
+ 181:ServoController.c **** {
+ 450               		.loc 1 181 0
+ 451               		.cfi_startproc
+ 452               	.LVL44:
+ 453               	/* prologue: function */
+ 454               	/* frame size = 0 */
+ 455               	/* stack size = 0 */
+ 456               	.L__stack_usage = 0
+ 457 01c2 FC01      		movw r30,r24
+ 458               	.LVL45:
+ 182:ServoController.c **** 	uint16_t data=0;
+ 459               		.loc 1 182 0
+ 460 01c4 80E0      		ldi r24,0
+ 461 01c6 90E0      		ldi r25,0
+ 462               	.LVL46:
+ 183:ServoController.c **** 	while(*dataStart!=END_OF_SIGNAL){						//ASSIGN THE STOP BIT RECOGNITION
+ 184:ServoController.c **** 		data=data*10+(*dataStart-48);
+ 463               		.loc 1 184 0
+ 464 01c8 3AE0      		ldi r19,lo8(10)
+ 465               	.LVL47:
+ 466               	.L41:
+ 183:ServoController.c **** 	while(*dataStart!=END_OF_SIGNAL){						//ASSIGN THE STOP BIT RECOGNITION
+ 467               		.loc 1 183 0 discriminator 1
+ 468 01ca 2191      		ld r18,Z+
+ 469               	.LVL48:
+ 470 01cc 2D30      		cpi r18,lo8(13)
+ 471 01ce 01F0      		breq .L43
+ 472               		.loc 1 184 0
+ 473 01d0 AC01      		movw r20,r24
+ 474 01d2 349F      		mul r19,r20
+ 475 01d4 C001      		movw r24,r0
+ 476 01d6 359F      		mul r19,r21
+ 477 01d8 900D      		add r25,r0
+ 478 01da 1124      		clr __zero_reg__
+ 479               	.LVL49:
+ 480 01dc C097      		sbiw r24,48
+ 481 01de 820F      		add r24,r18
+ 482 01e0 911D      		adc r25,__zero_reg__
+ 483               	.LVL50:
+ 484 01e2 00C0      		rjmp .L41
+ 485               	.LVL51:
+ 486               	.L43:
+ 487               	/* epilogue start */
+ 185:ServoController.c **** 		dataStart++;
+ 186:ServoController.c **** 	}
+ 187:ServoController.c **** 	return data;
+ 188:ServoController.c **** }
+ 488               		.loc 1 188 0
+ 489 01e4 0895      		ret
+ 490               		.cfi_endproc
+ 491               	.LFE11:
+ 493               	.global	PrepareAddToList
+ 495               	PrepareAddToList:
+ 496               	.LFB9:
+ 166:ServoController.c **** {
+ 497               		.loc 1 166 0
+ 498               		.cfi_startproc
+ 499               	.LVL52:
+ 500 01e6 EF92      		push r14
+ 501               	.LCFI16:
+ 502               		.cfi_def_cfa_offset 3
+ 503               		.cfi_offset 14, -2
+ 504 01e8 FF92      		push r15
+ 505               	.LCFI17:
+ 506               		.cfi_def_cfa_offset 4
+ 507               		.cfi_offset 15, -3
+ 508 01ea 0F93      		push r16
+ 509               	.LCFI18:
+ 510               		.cfi_def_cfa_offset 5
+ 511               		.cfi_offset 16, -4
+ 512 01ec 1F93      		push r17
+ 513               	.LCFI19:
+ 514               		.cfi_def_cfa_offset 6
+ 515               		.cfi_offset 17, -5
+ 516 01ee CF93      		push r28
+ 517               	.LCFI20:
+ 518               		.cfi_def_cfa_offset 7
+ 519               		.cfi_offset 28, -6
+ 520 01f0 DF93      		push r29
+ 521               	.LCFI21:
+ 522               		.cfi_def_cfa_offset 8
+ 523               		.cfi_offset 29, -7
+ 524               	/* prologue: function */
+ 525               	/* frame size = 0 */
+ 526               	/* stack size = 6 */
+ 527               	.L__stack_usage = 6
+ 528 01f2 7C01      		movw r14,r24
+ 167:ServoController.c **** 	(*servoSwitchPtr)->number=(*start-48);
+ 529               		.loc 1 167 0
+ 530 01f4 E091 0000 		lds r30,servoSwitchPtr
+ 531 01f8 F091 0000 		lds r31,servoSwitchPtr+1
+ 532 01fc 0081      		ld r16,Z
+ 533 01fe 1181      		ldd r17,Z+1
+ 534 0200 EC01      		movw r28,r24
+ 535 0202 2991      		ld r18,Y+
+ 536 0204 30E0      		ldi r19,0
+ 537 0206 2053      		subi r18,48
+ 538 0208 3109      		sbc r19,__zero_reg__
+ 539 020a F801      		movw r30,r16
+ 540 020c 3383      		std Z+3,r19
+ 541 020e 2283      		std Z+2,r18
+ 168:ServoController.c **** 	(*servoSwitchPtr)->angle=StringToInt(start+1);
+ 542               		.loc 1 168 0
+ 543 0210 CE01      		movw r24,r28
+ 544               	.LVL53:
+ 545 0212 0E94 0000 		call StringToInt
+ 546               	.LVL54:
+ 547 0216 F801      		movw r30,r16
+ 548 0218 9183      		std Z+1,r25
+ 549 021a 8083      		st Z,r24
+ 169:ServoController.c **** 	(*servoSwitchPtrDup)->number=(*start-48);
+ 550               		.loc 1 169 0
+ 551 021c E091 0000 		lds r30,servoSwitchPtrDup
+ 552 0220 F091 0000 		lds r31,servoSwitchPtrDup+1
+ 553 0224 0081      		ld r16,Z
+ 554 0226 1181      		ldd r17,Z+1
+ 555 0228 F701      		movw r30,r14
+ 556 022a 8081      		ld r24,Z
+ 557 022c 90E0      		ldi r25,0
+ 558 022e C097      		sbiw r24,48
+ 559 0230 F801      		movw r30,r16
+ 560 0232 9383      		std Z+3,r25
+ 561 0234 8283      		std Z+2,r24
+ 170:ServoController.c **** 	(*servoSwitchPtrDup)->angle=StringToInt(start+1);
+ 562               		.loc 1 170 0
+ 563 0236 CE01      		movw r24,r28
+ 564 0238 0E94 0000 		call StringToInt
+ 565               	.LVL55:
+ 566 023c F801      		movw r30,r16
+ 567 023e 9183      		std Z+1,r25
+ 568 0240 8083      		st Z,r24
+ 569               	/* epilogue start */
+ 171:ServoController.c **** }
+ 570               		.loc 1 171 0
+ 571 0242 DF91      		pop r29
+ 572 0244 CF91      		pop r28
+ 573 0246 1F91      		pop r17
+ 574 0248 0F91      		pop r16
+ 575 024a FF90      		pop r15
+ 576 024c EF90      		pop r14
+ 577               	.LVL56:
+ 578 024e 0895      		ret
+ 579               		.cfi_endproc
+ 580               	.LFE9:
+ 582               	.global	SendList
+ 584               	SendList:
+ 585               	.LFB12:
+ 189:ServoController.c **** 
+ 190:ServoController.c **** servoList* SendList(servoList* head)
+ 191:ServoController.c **** {
+ 586               		.loc 1 191 0
+ 587               		.cfi_startproc
+ 588               	.LVL57:
+ 589 0250 0F93      		push r16
+ 590               	.LCFI22:
+ 591               		.cfi_def_cfa_offset 3
+ 592               		.cfi_offset 16, -2
+ 593 0252 1F93      		push r17
+ 594               	.LCFI23:
+ 595               		.cfi_def_cfa_offset 4
+ 596               		.cfi_offset 17, -3
+ 597 0254 CF93      		push r28
+ 598               	.LCFI24:
+ 599               		.cfi_def_cfa_offset 5
+ 600               		.cfi_offset 28, -4
+ 601 0256 DF93      		push r29
+ 602               	.LCFI25:
+ 603               		.cfi_def_cfa_offset 6
+ 604               		.cfi_offset 29, -5
+ 605               	/* prologue: function */
+ 606               	/* frame size = 0 */
+ 607               	/* stack size = 4 */
+ 608               	.L__stack_usage = 4
+ 609 0258 8C01      		movw r16,r24
+ 610               	.LVL58:
+ 192:ServoController.c **** 	servoList *tempServo=head;
+ 611               		.loc 1 192 0
+ 612 025a C82F      		mov r28,r24
+ 613 025c D12F      		mov r29,r17
+ 614               	.LVL59:
+ 615               	.L46:
+ 193:ServoController.c **** 	while(tempServo!=NULL){
+ 616               		.loc 1 193 0 discriminator 1
+ 617 025e 2097      		sbiw r28,0
+ 618 0260 01F0      		breq .L50
+ 619               	.L48:
+ 194:ServoController.c **** 		while(!(UCSRA && (1<<UDRE)));
+ 620               		.loc 1 194 0
+ 621 0262 8BB1      		in r24,0xb
+ 622 0264 8823      		tst r24
+ 623 0266 01F0      		breq .L48
+ 195:ServoController.c **** 		SendInteger(tempServo->angle);
+ 624               		.loc 1 195 0
+ 625 0268 8881      		ld r24,Y
+ 626 026a 9981      		ldd r25,Y+1
+ 627 026c 0E94 0000 		call SendInteger
+ 628               	.LVL60:
+ 196:ServoController.c **** 		SendInteger(tempServo->number);
+ 629               		.loc 1 196 0
+ 630 0270 8A81      		ldd r24,Y+2
+ 631 0272 9B81      		ldd r25,Y+3
+ 632 0274 0E94 0000 		call SendInteger
+ 633               	.LVL61:
+ 197:ServoController.c **** 		tempServo=tempServo->node ;
+ 634               		.loc 1 197 0
+ 635 0278 0C80      		ldd __tmp_reg__,Y+4
+ 636 027a DD81      		ldd r29,Y+5
+ 637 027c C02D      		mov r28,__tmp_reg__
+ 638               	.LVL62:
+ 639 027e 00C0      		rjmp .L46
+ 640               	.L50:
+ 198:ServoController.c **** 		}
+ 199:ServoController.c **** 	return head;
+ 200:ServoController.c **** }
+ 641               		.loc 1 200 0
+ 642 0280 C801      		movw r24,r16
+ 643               	/* epilogue start */
+ 644 0282 DF91      		pop r29
+ 645 0284 CF91      		pop r28
+ 646               	.LVL63:
+ 647 0286 1F91      		pop r17
+ 648 0288 0F91      		pop r16
+ 649               	.LVL64:
+ 650 028a 0895      		ret
+ 651               		.cfi_endproc
+ 652               	.LFE12:
+ 654               	.global	USARTInit
+ 656               	USARTInit:
+ 657               	.LFB14:
+ 201:ServoController.c **** 
+ 202:ServoController.c **** //ALWAYS KEEP A DELAY OF ABOUT 2MS OR 3MS (MINIMUM) BETWEEN THE TRANSMITTION OF 2 CONSECUTIVE DATA/
+ 203:ServoController.c **** int main(void)
+ 204:ServoController.c **** {
+ 205:ServoController.c **** 	
+ 206:ServoController.c **** 	USARTInit();
+ 207:ServoController.c **** 	ServoPortInit();
+ 208:ServoController.c **** 	TimerInit();
+ 209:ServoController.c **** 
+ 210:ServoController.c **** 	servoList *servoNodeHead,*servoNodeHeadDup;
+ 211:ServoController.c **** 	servoNodeHead=CreateList();
+ 212:ServoController.c **** 	servoNodeHeadDup=CreateList();
+ 213:ServoController.c **** 	servoSwitchListPtr=&servoNodeHead;
+ 214:ServoController.c **** 	tempServoHead=*servoSwitchListPtr;
+ 215:ServoController.c **** 	//servoHead=tempServoHead=servoNodeHead;
+ 216:ServoController.c **** 
+ 217:ServoController.c **** 	servoSwitch=(servoList*)malloc(sizeof(servoList));
+ 218:ServoController.c **** 	servoSwitchDup=(servoList*)malloc(sizeof(servoList));
+ 219:ServoController.c **** 	servoSwitchPtr=&servoSwitch;
+ 220:ServoController.c **** 	servoSwitchPtrDup=&servoSwitchDup;
+ 221:ServoController.c **** 	tempDataPtr=tempData;
+ 222:ServoController.c **** 
+ 223:ServoController.c **** 	clearbit(UCSRA,RXC);
+ 224:ServoController.c **** 	
+ 225:ServoController.c **** SendList(servoNodeHead);
+ 226:ServoController.c **** SendList(servoNodeHeadDup);
+ 227:ServoController.c **** 
+ 228:ServoController.c **** 	TCNT1=0;
+ 229:ServoController.c **** 
+ 230:ServoController.c **** 	sei();
+ 231:ServoController.c **** 	while(1){
+ 232:ServoController.c **** 			//Without Delay the below loop is not executing.
+ 233:ServoController.c **** 			_delay_ms(10); 
+ 234:ServoController.c **** //SendInteger(TCNT1);	
+ 235:ServoController.c **** //_delay_ms(5000);
+ 236:ServoController.c **** //_delay_ms(5000);
+ 237:ServoController.c **** 			if(arrangeSignalFlag==1){
+ 238:ServoController.c **** 				PrepareAddToList(tempData);
+ 239:ServoController.c **** 				//servoNodeHead=ArrangeAngle(*servoSwitchPtr,servoNodeHead,1);
+ 240:ServoController.c **** 				//	servoSwitchListPtr=&servoNodeHead;
+ 241:ServoController.c **** 				if(servoSwitchListPtr==&servoNodeHead){
+ 242:ServoController.c **** 					servoNodeHeadDup=ArrangeAngle(*servoSwitchPtrDup,servoNodeHeadDup,0);
+ 243:ServoController.c **** 					servoSwitchListPtr=&servoNodeHeadDup;
+ 244:ServoController.c **** //_delay_ms(5000);
+ 245:ServoController.c **** //_delay_ms(5000);
+ 246:ServoController.c **** 					servoNodeHead=ArrangeAngle(*servoSwitchPtr,servoNodeHead,1);
+ 247:ServoController.c **** 				}
+ 248:ServoController.c **** 				else{
+ 249:ServoController.c **** 					servoNodeHead=ArrangeAngle(*servoSwitchPtr,servoNodeHead,1);
+ 250:ServoController.c **** 					servoSwitchListPtr=&servoNodeHead;
+ 251:ServoController.c **** //_delay_ms(5000);
+ 252:ServoController.c **** //_delay_ms(5000);
+ 253:ServoController.c **** 					servoNodeHeadDup=ArrangeAngle(*servoSwitchPtrDup,servoNodeHeadDup,0);
+ 254:ServoController.c **** 				}
+ 255:ServoController.c **** 				tempDataPtr=tempData;
+ 256:ServoController.c **** 				arrangeSignalFlag=0;
+ 257:ServoController.c **** 				//count=0;
+ 258:ServoController.c **** 			}
+ 259:ServoController.c **** 	}
+ 260:ServoController.c **** return 0;
+ 261:ServoController.c **** }
+ 262:ServoController.c **** 
+ 263:ServoController.c **** void USARTInit()
+ 264:ServoController.c **** {
+ 658               		.loc 1 264 0
+ 659               		.cfi_startproc
+ 660               	/* prologue: function */
+ 661               	/* frame size = 0 */
+ 662               	/* stack size = 0 */
+ 663               	.L__stack_usage = 0
+ 265:ServoController.c **** 	UCSRB |=(1<<RXEN)|(1<<TXEN)|(1<<RXCIE);						//Enabling the Receiver and Receiver Interrupt
+ 664               		.loc 1 265 0
+ 665 028c 8AB1      		in r24,0xa
+ 666 028e 8869      		ori r24,lo8(-104)
+ 667 0290 8AB9      		out 0xa,r24
+ 266:ServoController.c **** 	UCSRC |=(1<<URSEL)|(1<<UCSZ1)|(1<<UCSZ0);
+ 668               		.loc 1 266 0
+ 669 0292 80B5      		in r24,0x20
+ 670 0294 8668      		ori r24,lo8(-122)
+ 671 0296 80BD      		out 0x20,r24
+ 267:ServoController.c **** 	UBRRL = baudRate;
+ 672               		.loc 1 267 0
+ 673 0298 8091 0000 		lds r24,baudRate
+ 674 029c 89B9      		out 0x9,r24
+ 268:ServoController.c **** 	UBRRH &=~(1<<URSEL);
+ 675               		.loc 1 268 0
+ 676 029e 80B5      		in r24,0x20
+ 677 02a0 8F77      		andi r24,lo8(127)
+ 678 02a2 80BD      		out 0x20,r24
+ 269:ServoController.c **** 	UBRRH = (baudRate<<8);
+ 679               		.loc 1 269 0
+ 680 02a4 10BC      		out 0x20,__zero_reg__
+ 270:ServoController.c **** 	clearbit(UCSRA,RXC);								//RXC bit needs to set to zero before enabling interrupt
+ 681               		.loc 1 270 0
+ 682 02a6 5F98      		cbi 0xb,7
+ 683 02a8 0895      		ret
+ 684               		.cfi_endproc
+ 685               	.LFE14:
+ 687               	.global	TimerInit
+ 689               	TimerInit:
+ 690               	.LFB15:
+ 271:ServoController.c **** }
+ 272:ServoController.c **** 
+ 273:ServoController.c **** void TimerInit()
+ 274:ServoController.c **** {
+ 691               		.loc 1 274 0
+ 692               		.cfi_startproc
+ 693               	/* prologue: function */
+ 694               	/* frame size = 0 */
+ 695               	/* stack size = 0 */
+ 696               	.L__stack_usage = 0
+ 275:ServoController.c **** 	//TCCR1A |=((0<<WGM11)|(0<<WGM10));	 					//NO CHANGES IN THE TCCR1A REGISTER
+ 276:ServoController.c **** 	TCCR1B |=(1<<WGM12)|(1<<WGM13)|(1<<CS11);					//CTC MODE(12) - TOP VALUE - ICR1 AND PRESCALAR => 8
+ 697               		.loc 1 276 0
+ 698 02aa 8EB5      		in r24,0x2e
+ 699 02ac 8A61      		ori r24,lo8(26)
+ 700 02ae 8EBD      		out 0x2e,r24
+ 277:ServoController.c **** 	TIMSK |=(1<<TICIE1);			 					//ENABLING INTERRUPT FOR TCNT1 REGISTER MATCHING ICR1
+ 701               		.loc 1 277 0
+ 702 02b0 89B7      		in r24,0x39
+ 703 02b2 8062      		ori r24,lo8(32)
+ 704 02b4 89BF      		out 0x39,r24
+ 705 02b6 0895      		ret
+ 706               		.cfi_endproc
+ 707               	.LFE15:
+ 709               	.global	ServoPortInit
+ 711               	ServoPortInit:
+ 712               	.LFB16:
+ 278:ServoController.c **** }
+ 279:ServoController.c **** 
+ 280:ServoController.c **** void ServoPortInit()
+ 281:ServoController.c **** {
+ 713               		.loc 1 281 0
+ 714               		.cfi_startproc
+ 715               	/* prologue: function */
+ 716               	/* frame size = 0 */
+ 717               	/* stack size = 0 */
+ 718               	.L__stack_usage = 0
+ 282:ServoController.c **** 	DDRB = 0xff;
+ 719               		.loc 1 282 0
+ 720 02b8 8FEF      		ldi r24,lo8(-1)
+ 721 02ba 87BB      		out 0x17,r24
+ 283:ServoController.c **** 	PORTB= 0xff;
+ 722               		.loc 1 283 0
+ 723 02bc 88BB      		out 0x18,r24
+ 724 02be 0895      		ret
+ 725               		.cfi_endproc
+ 726               	.LFE16:
+ 728               		.section	.text.startup,"ax",@progbits
+ 729               	.global	main
+ 731               	main:
+ 732               	.LFB13:
+ 204:ServoController.c **** {
+ 733               		.loc 1 204 0
+ 734               		.cfi_startproc
+ 735 0000 CF93      		push r28
+ 736               	.LCFI26:
+ 737               		.cfi_def_cfa_offset 3
+ 738               		.cfi_offset 28, -2
+ 739 0002 DF93      		push r29
+ 740               	.LCFI27:
+ 741               		.cfi_def_cfa_offset 4
+ 742               		.cfi_offset 29, -3
+ 743 0004 00D0      		rcall .
+ 744 0006 00D0      		rcall .
+ 745               	.LCFI28:
+ 746               		.cfi_def_cfa_offset 8
+ 747 0008 CDB7      		in r28,__SP_L__
+ 748 000a DEB7      		in r29,__SP_H__
+ 749               	.LCFI29:
+ 750               		.cfi_def_cfa_register 28
+ 751               	/* prologue: function */
+ 752               	/* frame size = 4 */
+ 753               	/* stack size = 6 */
+ 754               	.L__stack_usage = 6
+ 206:ServoController.c **** 	USARTInit();
+ 755               		.loc 1 206 0
+ 756 000c 0E94 0000 		call USARTInit
+ 757               	.LVL65:
+ 207:ServoController.c **** 	ServoPortInit();
+ 758               		.loc 1 207 0
+ 759 0010 0E94 0000 		call ServoPortInit
+ 760               	.LVL66:
+ 208:ServoController.c **** 	TimerInit();
+ 761               		.loc 1 208 0
+ 762 0014 0E94 0000 		call TimerInit
+ 763               	.LVL67:
+ 211:ServoController.c **** 	servoNodeHead=CreateList();
+ 764               		.loc 1 211 0
+ 765 0018 0E94 0000 		call CreateList
+ 766               	.LVL68:
+ 767 001c 9C83      		std Y+4,r25
+ 768 001e 8B83      		std Y+3,r24
+ 212:ServoController.c **** 	servoNodeHeadDup=CreateList();
+ 769               		.loc 1 212 0
+ 770 0020 0E94 0000 		call CreateList
+ 771               	.LVL69:
+ 772 0024 9A83      		std Y+2,r25
+ 773 0026 8983      		std Y+1,r24
+ 213:ServoController.c **** 	servoSwitchListPtr=&servoNodeHead;
+ 774               		.loc 1 213 0
+ 775 0028 CE01      		movw r24,r28
+ 776 002a 0396      		adiw r24,3
+ 777 002c 9093 0000 		sts servoSwitchListPtr+1,r25
+ 778 0030 8093 0000 		sts servoSwitchListPtr,r24
+ 214:ServoController.c **** 	tempServoHead=*servoSwitchListPtr;
+ 779               		.loc 1 214 0
+ 780 0034 8B81      		ldd r24,Y+3
+ 781 0036 9C81      		ldd r25,Y+4
+ 782 0038 9093 0000 		sts tempServoHead+1,r25
+ 783 003c 8093 0000 		sts tempServoHead,r24
+ 217:ServoController.c **** 	servoSwitch=(servoList*)malloc(sizeof(servoList));
+ 784               		.loc 1 217 0
+ 785 0040 86E0      		ldi r24,lo8(6)
+ 786 0042 90E0      		ldi r25,0
+ 787 0044 0E94 0000 		call malloc
+ 788               	.LVL70:
+ 789 0048 9093 0000 		sts servoSwitch+1,r25
+ 790 004c 8093 0000 		sts servoSwitch,r24
+ 218:ServoController.c **** 	servoSwitchDup=(servoList*)malloc(sizeof(servoList));
+ 791               		.loc 1 218 0
+ 792 0050 86E0      		ldi r24,lo8(6)
+ 793 0052 90E0      		ldi r25,0
+ 794 0054 0E94 0000 		call malloc
+ 795               	.LVL71:
+ 796 0058 9093 0000 		sts servoSwitchDup+1,r25
+ 797 005c 8093 0000 		sts servoSwitchDup,r24
+ 219:ServoController.c **** 	servoSwitchPtr=&servoSwitch;
+ 798               		.loc 1 219 0
+ 799 0060 80E0      		ldi r24,lo8(servoSwitch)
+ 800 0062 90E0      		ldi r25,hi8(servoSwitch)
+ 801 0064 9093 0000 		sts servoSwitchPtr+1,r25
+ 802 0068 8093 0000 		sts servoSwitchPtr,r24
+ 220:ServoController.c **** 	servoSwitchPtrDup=&servoSwitchDup;
+ 803               		.loc 1 220 0
+ 804 006c 80E0      		ldi r24,lo8(servoSwitchDup)
+ 805 006e 90E0      		ldi r25,hi8(servoSwitchDup)
+ 806 0070 9093 0000 		sts servoSwitchPtrDup+1,r25
+ 807 0074 8093 0000 		sts servoSwitchPtrDup,r24
+ 221:ServoController.c **** 	tempDataPtr=tempData;
+ 808               		.loc 1 221 0
+ 809 0078 80E0      		ldi r24,lo8(tempData)
+ 810 007a 90E0      		ldi r25,hi8(tempData)
+ 811 007c 9093 0000 		sts tempDataPtr+1,r25
+ 812 0080 8093 0000 		sts tempDataPtr,r24
+ 223:ServoController.c **** 	clearbit(UCSRA,RXC);
+ 813               		.loc 1 223 0
+ 814 0084 5F98      		cbi 0xb,7
+ 225:ServoController.c **** SendList(servoNodeHead);
+ 815               		.loc 1 225 0
+ 816 0086 8B81      		ldd r24,Y+3
+ 817 0088 9C81      		ldd r25,Y+4
+ 818 008a 0E94 0000 		call SendList
+ 819               	.LVL72:
+ 226:ServoController.c **** SendList(servoNodeHeadDup);
+ 820               		.loc 1 226 0
+ 821 008e 8981      		ldd r24,Y+1
+ 822 0090 9A81      		ldd r25,Y+2
+ 823 0092 0E94 0000 		call SendList
+ 824               	.LVL73:
+ 228:ServoController.c **** 	TCNT1=0;
+ 825               		.loc 1 228 0
+ 826 0096 1DBC      		out 0x2c+1,__zero_reg__
+ 827 0098 1CBC      		out 0x2c,__zero_reg__
+ 230:ServoController.c **** 	sei();
+ 828               		.loc 1 230 0
+ 829               	/* #APP */
+ 830               	 ;  230 "ServoController.c" 1
+ 831 009a 7894      		sei
+ 832               	 ;  0 "" 2
+ 833               	/* #NOAPP */
+ 834 009c 8E01      		movw r16,r28
+ 835 009e 0D5F      		subi r16,-3
+ 836 00a0 1F4F      		sbci r17,-1
+ 243:ServoController.c **** 					servoSwitchListPtr=&servoNodeHeadDup;
+ 837               		.loc 1 243 0
+ 838 00a2 CE01      		movw r24,r28
+ 839 00a4 0196      		adiw r24,1
+ 840 00a6 7C01      		movw r14,r24
+ 841               	.L56:
+ 842               	.LVL74:
+ 843               	.LBB10:
+ 844               	.LBB11:
+ 845               		.loc 2 164 0
+ 846 00a8 8FE3      		ldi r24,lo8(-25537)
+ 847 00aa 9CE9      		ldi r25,hi8(-25537)
+ 848 00ac 0197      		1: sbiw r24,1
+ 849 00ae 01F4      		brne 1b
+ 850 00b0 00C0      		rjmp .
+ 851 00b2 0000      		nop
+ 852               	.LBE11:
+ 853               	.LBE10:
+ 237:ServoController.c **** 			if(arrangeSignalFlag==1){
+ 854               		.loc 1 237 0
+ 855 00b4 8091 0000 		lds r24,arrangeSignalFlag
+ 856 00b8 9091 0000 		lds r25,arrangeSignalFlag+1
+ 857 00bc 0197      		sbiw r24,1
+ 858 00be 01F4      		brne .L56
+ 238:ServoController.c **** 				PrepareAddToList(tempData);
+ 859               		.loc 1 238 0
+ 860 00c0 80E0      		ldi r24,lo8(tempData)
+ 861 00c2 90E0      		ldi r25,hi8(tempData)
+ 862 00c4 0E94 0000 		call PrepareAddToList
+ 863               	.LVL75:
+ 241:ServoController.c **** 				if(servoSwitchListPtr==&servoNodeHead){
+ 864               		.loc 1 241 0
+ 865 00c8 8091 0000 		lds r24,servoSwitchListPtr
+ 866 00cc 9091 0000 		lds r25,servoSwitchListPtr+1
+ 867 00d0 8017      		cp r24,r16
+ 868 00d2 9107      		cpc r25,r17
+ 869 00d4 01F4      		brne .L57
+ 242:ServoController.c **** 					servoNodeHeadDup=ArrangeAngle(*servoSwitchPtrDup,servoNodeHeadDup,0);
+ 870               		.loc 1 242 0
+ 871 00d6 6981      		ldd r22,Y+1
+ 872 00d8 7A81      		ldd r23,Y+2
+ 873 00da E091 0000 		lds r30,servoSwitchPtrDup
+ 874 00de F091 0000 		lds r31,servoSwitchPtrDup+1
+ 875 00e2 40E0      		ldi r20,0
+ 876 00e4 50E0      		ldi r21,0
+ 877 00e6 8081      		ld r24,Z
+ 878 00e8 9181      		ldd r25,Z+1
+ 879 00ea 0E94 0000 		call ArrangeAngle
+ 880               	.LVL76:
+ 881 00ee 9A83      		std Y+2,r25
+ 882 00f0 8983      		std Y+1,r24
+ 243:ServoController.c **** 					servoSwitchListPtr=&servoNodeHeadDup;
+ 883               		.loc 1 243 0
+ 884 00f2 F092 0000 		sts servoSwitchListPtr+1,r15
+ 885 00f6 E092 0000 		sts servoSwitchListPtr,r14
+ 246:ServoController.c **** 					servoNodeHead=ArrangeAngle(*servoSwitchPtr,servoNodeHead,1);
+ 886               		.loc 1 246 0
+ 887 00fa 6B81      		ldd r22,Y+3
+ 888 00fc 7C81      		ldd r23,Y+4
+ 889 00fe E091 0000 		lds r30,servoSwitchPtr
+ 890 0102 F091 0000 		lds r31,servoSwitchPtr+1
+ 891 0106 41E0      		ldi r20,lo8(1)
+ 892 0108 50E0      		ldi r21,0
+ 893 010a 8081      		ld r24,Z
+ 894 010c 9181      		ldd r25,Z+1
+ 895 010e 0E94 0000 		call ArrangeAngle
+ 896               	.LVL77:
+ 897 0112 9C83      		std Y+4,r25
+ 898 0114 8B83      		std Y+3,r24
+ 899 0116 00C0      		rjmp .L58
+ 900               	.L57:
+ 249:ServoController.c **** 					servoNodeHead=ArrangeAngle(*servoSwitchPtr,servoNodeHead,1);
+ 901               		.loc 1 249 0
+ 902 0118 6B81      		ldd r22,Y+3
+ 903 011a 7C81      		ldd r23,Y+4
+ 904 011c E091 0000 		lds r30,servoSwitchPtr
+ 905 0120 F091 0000 		lds r31,servoSwitchPtr+1
+ 906 0124 41E0      		ldi r20,lo8(1)
+ 907 0126 50E0      		ldi r21,0
+ 908 0128 8081      		ld r24,Z
+ 909 012a 9181      		ldd r25,Z+1
+ 910 012c 0E94 0000 		call ArrangeAngle
+ 911               	.LVL78:
+ 912 0130 9C83      		std Y+4,r25
+ 913 0132 8B83      		std Y+3,r24
+ 250:ServoController.c **** 					servoSwitchListPtr=&servoNodeHead;
+ 914               		.loc 1 250 0
+ 915 0134 1093 0000 		sts servoSwitchListPtr+1,r17
+ 916 0138 0093 0000 		sts servoSwitchListPtr,r16
+ 253:ServoController.c **** 					servoNodeHeadDup=ArrangeAngle(*servoSwitchPtrDup,servoNodeHeadDup,0);
+ 917               		.loc 1 253 0
+ 918 013c 6981      		ldd r22,Y+1
+ 919 013e 7A81      		ldd r23,Y+2
+ 920 0140 E091 0000 		lds r30,servoSwitchPtrDup
+ 921 0144 F091 0000 		lds r31,servoSwitchPtrDup+1
+ 922 0148 40E0      		ldi r20,0
+ 923 014a 50E0      		ldi r21,0
+ 924 014c 8081      		ld r24,Z
+ 925 014e 9181      		ldd r25,Z+1
+ 926 0150 0E94 0000 		call ArrangeAngle
+ 927               	.LVL79:
+ 928 0154 9A83      		std Y+2,r25
+ 929 0156 8983      		std Y+1,r24
+ 930               	.L58:
+ 255:ServoController.c **** 				tempDataPtr=tempData;
+ 931               		.loc 1 255 0
+ 932 0158 80E0      		ldi r24,lo8(tempData)
+ 933 015a 90E0      		ldi r25,hi8(tempData)
+ 934 015c 9093 0000 		sts tempDataPtr+1,r25
+ 935 0160 8093 0000 		sts tempDataPtr,r24
+ 256:ServoController.c **** 				arrangeSignalFlag=0;
+ 936               		.loc 1 256 0
+ 937 0164 1092 0000 		sts arrangeSignalFlag+1,__zero_reg__
+ 938 0168 1092 0000 		sts arrangeSignalFlag,__zero_reg__
+ 939 016c 00C0      		rjmp .L56
+ 940               		.cfi_endproc
+ 941               	.LFE13:
+ 943               	.global	__floatunsisf
+ 944               	.global	__mulsf3
+ 945               	.global	__addsf3
+ 946               	.global	__fixunssfsi
+ 947               	.global	__subsf3
+ 948               		.text
+ 949               	.global	__vector_6
+ 951               	__vector_6:
+ 952               	.LFB17:
+ 284:ServoController.c **** }
+ 285:ServoController.c **** 
+ 286:ServoController.c **** //*************************************************************************************************
+ 287:ServoController.c **** //	      					INTERRUPTS				       	       //
+ 288:ServoController.c **** //*************************************************************************************************
+ 289:ServoController.c **** ISR(TIMER1_CAPT_vect)
+ 290:ServoController.c **** {
+ 953               		.loc 1 290 0
+ 954               		.cfi_startproc
+ 955 02c0 1F92      		push r1
+ 956               	.LCFI30:
+ 957               		.cfi_def_cfa_offset 3
+ 958               		.cfi_offset 1, -2
+ 959 02c2 0F92      		push r0
+ 960               	.LCFI31:
+ 961               		.cfi_def_cfa_offset 4
+ 962               		.cfi_offset 0, -3
+ 963 02c4 0FB6      		in r0,__SREG__
+ 964 02c6 0F92      		push r0
+ 965 02c8 1124      		clr __zero_reg__
+ 966 02ca 2F93      		push r18
+ 967               	.LCFI32:
+ 968               		.cfi_def_cfa_offset 5
+ 969               		.cfi_offset 18, -4
+ 970 02cc 3F93      		push r19
+ 971               	.LCFI33:
+ 972               		.cfi_def_cfa_offset 6
+ 973               		.cfi_offset 19, -5
+ 974 02ce 4F93      		push r20
+ 975               	.LCFI34:
+ 976               		.cfi_def_cfa_offset 7
+ 977               		.cfi_offset 20, -6
+ 978 02d0 5F93      		push r21
+ 979               	.LCFI35:
+ 980               		.cfi_def_cfa_offset 8
+ 981               		.cfi_offset 21, -7
+ 982 02d2 6F93      		push r22
+ 983               	.LCFI36:
+ 984               		.cfi_def_cfa_offset 9
+ 985               		.cfi_offset 22, -8
+ 986 02d4 7F93      		push r23
+ 987               	.LCFI37:
+ 988               		.cfi_def_cfa_offset 10
+ 989               		.cfi_offset 23, -9
+ 990 02d6 8F93      		push r24
+ 991               	.LCFI38:
+ 992               		.cfi_def_cfa_offset 11
+ 993               		.cfi_offset 24, -10
+ 994 02d8 9F93      		push r25
+ 995               	.LCFI39:
+ 996               		.cfi_def_cfa_offset 12
+ 997               		.cfi_offset 25, -11
+ 998 02da AF93      		push r26
+ 999               	.LCFI40:
+ 1000               		.cfi_def_cfa_offset 13
+ 1001               		.cfi_offset 26, -12
+ 1002 02dc BF93      		push r27
+ 1003               	.LCFI41:
+ 1004               		.cfi_def_cfa_offset 14
+ 1005               		.cfi_offset 27, -13
+ 1006 02de CF93      		push r28
+ 1007               	.LCFI42:
+ 1008               		.cfi_def_cfa_offset 15
+ 1009               		.cfi_offset 28, -14
+ 1010 02e0 DF93      		push r29
+ 1011               	.LCFI43:
+ 1012               		.cfi_def_cfa_offset 16
+ 1013               		.cfi_offset 29, -15
+ 1014 02e2 EF93      		push r30
+ 1015               	.LCFI44:
+ 1016               		.cfi_def_cfa_offset 17
+ 1017               		.cfi_offset 30, -16
+ 1018 02e4 FF93      		push r31
+ 1019               	.LCFI45:
+ 1020               		.cfi_def_cfa_offset 18
+ 1021               		.cfi_offset 31, -17
+ 1022               	/* prologue: Signal */
+ 1023               	/* frame size = 0 */
+ 1024               	/* stack size = 17 */
+ 1025               	.L__stack_usage = 17
+ 291:ServoController.c **** 	TCNT1=0;
+ 1026               		.loc 1 291 0
+ 1027 02e6 1DBC      		out 0x2c+1,__zero_reg__
+ 1028 02e8 1CBC      		out 0x2c,__zero_reg__
+ 292:ServoController.c **** 	if(count==0){
+ 1029               		.loc 1 292 0
+ 1030 02ea 8091 0000 		lds r24,count
+ 1031 02ee 9091 0000 		lds r25,count+1
+ 1032 02f2 892B      		or r24,r25
+ 1033 02f4 01F4      		brne .L61
+ 293:ServoController.c **** 		PORTB=0xff;
+ 1034               		.loc 1 293 0
+ 1035 02f6 8FEF      		ldi r24,lo8(-1)
+ 1036 02f8 88BB      		out 0x18,r24
+ 294:ServoController.c **** 		ICR1=ICR1_BASE_VALUE+(tempServoHead->angle)*FACTOR;			//struct 0 angle
+ 1037               		.loc 1 294 0
+ 1038 02fa E091 0000 		lds r30,tempServoHead
+ 1039 02fe F091 0000 		lds r31,tempServoHead+1
+ 1040 0302 6081      		ld r22,Z
+ 1041 0304 7181      		ldd r23,Z+1
+ 1042 0306 80E0      		ldi r24,0
+ 1043 0308 90E0      		ldi r25,0
+ 1044 030a 0E94 0000 		call __floatunsisf
+ 1045               	.LVL80:
+ 1046 030e 2FE8      		ldi r18,lo8(-113)
+ 1047 0310 32EC      		ldi r19,lo8(-62)
+ 1048 0312 41EB      		ldi r20,lo8(-79)
+ 1049 0314 51E4      		ldi r21,lo8(65)
+ 1050 0316 0E94 0000 		call __mulsf3
+ 1051               	.LVL81:
+ 1052 031a 20E0      		ldi r18,0
+ 1053 031c 30E8      		ldi r19,lo8(-128)
+ 1054 031e 49E8      		ldi r20,lo8(-119)
+ 1055 0320 54E4      		ldi r21,lo8(68)
+ 1056 0322 0E94 0000 		call __addsf3
+ 1057               	.LVL82:
+ 1058 0326 0E94 0000 		call __fixunssfsi
+ 1059               	.LVL83:
+ 1060 032a 77BD      		out 0x26+1,r23
+ 1061 032c 66BD      		out 0x26,r22
+ 1062               	.L61:
+ 295:ServoController.c **** 	}
+ 296:ServoController.c **** 	while(((tempServoHead->number==tempServoHead->node->number)&& count >=1)){//&&count<=7)&&count>=1)
+ 297:ServoController.c **** 		clearbit(PORTB,((tempServoHead->number)-1));
+ 1063               		.loc 1 297 0 discriminator 1
+ 1064 032e 41E0      		ldi r20,lo8(1)
+ 1065 0330 50E0      		ldi r21,0
+ 1066               	.L62:
+ 296:ServoController.c **** 	while(((tempServoHead->number==tempServoHead->node->number)&& count >=1)){//&&count<=7)&&count>=1)
+ 1067               		.loc 1 296 0 discriminator 1
+ 1068 0332 E091 0000 		lds r30,tempServoHead
+ 1069 0336 F091 0000 		lds r31,tempServoHead+1
+ 1070 033a 8281      		ldd r24,Z+2
+ 1071 033c 9381      		ldd r25,Z+3
+ 1072 033e 0480      		ldd __tmp_reg__,Z+4
+ 1073 0340 F581      		ldd r31,Z+5
+ 1074 0342 E02D      		mov r30,__tmp_reg__
+ 1075 0344 6281      		ldd r22,Z+2
+ 1076 0346 7381      		ldd r23,Z+3
+ 1077 0348 2091 0000 		lds r18,count
+ 1078 034c 3091 0000 		lds r19,count+1
+ 1079 0350 8617      		cp r24,r22
+ 1080 0352 9707      		cpc r25,r23
+ 1081 0354 01F0      		breq .L63
+ 1082               	.L67:
+ 298:ServoController.c **** 		tempServoHead=tempServoHead->node;
+ 299:ServoController.c **** 		count++;
+ 300:ServoController.c **** 	}
+ 301:ServoController.c **** 	if((1<=count)&&(count<=7)){
+ 1083               		.loc 1 301 0
+ 1084 0356 2150      		subi r18,1
+ 1085 0358 3109      		sbc r19,__zero_reg__
+ 1086 035a 2730      		cpi r18,7
+ 1087 035c 3105      		cpc r19,__zero_reg__
+ 1088 035e 00F0      		brlo .+2
+ 1089 0360 00C0      		rjmp .L65
+ 302:ServoController.c **** 		clearbit(PORTB,	((tempServoHead->number)-1));				//angle [i-1]
+ 1090               		.loc 1 302 0
+ 1091 0362 48B3      		in r20,0x18
+ 1092 0364 9C01      		movw r18,r24
+ 1093 0366 2150      		subi r18,1
+ 1094 0368 3109      		sbc r19,__zero_reg__
+ 1095 036a 81E0      		ldi r24,lo8(1)
+ 1096 036c 90E0      		ldi r25,0
+ 1097 036e 00C0      		rjmp 2f
+ 1098               		1:
+ 1099 0370 880F      		lsl r24
+ 1100               		2:
+ 1101 0372 2A95      		dec r18
+ 1102 0374 02F4      		brpl 1b
+ 1103 0376 8095      		com r24
+ 1104 0378 8423      		and r24,r20
+ 1105 037a 88BB      		out 0x18,r24
+ 303:ServoController.c **** 		ICR1=(tempServoHead->node->angle-tempServoHead->angle)*FACTOR;
+ 1106               		.loc 1 303 0
+ 1107 037c E091 0000 		lds r30,tempServoHead
+ 1108 0380 F091 0000 		lds r31,tempServoHead+1
+ 1109 0384 C481      		ldd r28,Z+4
+ 1110 0386 D581      		ldd r29,Z+5
+ 1111 0388 6881      		ld r22,Y
+ 1112 038a 7981      		ldd r23,Y+1
+ 1113 038c 8081      		ld r24,Z
+ 1114 038e 9181      		ldd r25,Z+1
+ 1115 0390 681B      		sub r22,r24
+ 1116 0392 790B      		sbc r23,r25
+ 1117 0394 80E0      		ldi r24,0
+ 1118 0396 90E0      		ldi r25,0
+ 1119 0398 0E94 0000 		call __floatunsisf
+ 1120               	.LVL84:
+ 1121 039c 2FE8      		ldi r18,lo8(-113)
+ 1122 039e 32EC      		ldi r19,lo8(-62)
+ 1123 03a0 41EB      		ldi r20,lo8(-79)
+ 1124 03a2 51E4      		ldi r21,lo8(65)
+ 1125 03a4 0E94 0000 		call __mulsf3
+ 1126               	.LVL85:
+ 1127 03a8 0E94 0000 		call __fixunssfsi
+ 1128               	.LVL86:
+ 1129 03ac 77BD      		out 0x26+1,r23
+ 1130 03ae 66BD      		out 0x26,r22
+ 304:ServoController.c **** 		tempServoHead=tempServoHead->node;
+ 1131               		.loc 1 304 0
+ 1132 03b0 D093 0000 		sts tempServoHead+1,r29
+ 1133 03b4 C093 0000 		sts tempServoHead,r28
+ 1134 03b8 00C0      		rjmp .L65
+ 1135               	.L63:
+ 296:ServoController.c **** 	while(((tempServoHead->number==tempServoHead->node->number)&& count >=1)){//&&count<=7)&&count>=1)
+ 1136               		.loc 1 296 0 discriminator 2
+ 1137 03ba 1216      		cp __zero_reg__,r18
+ 1138 03bc 1306      		cpc __zero_reg__,r19
+ 1139 03be 04F4      		brge .L67
+ 297:ServoController.c **** 		clearbit(PORTB,((tempServoHead->number)-1));
+ 1140               		.loc 1 297 0
+ 1141 03c0 28B3      		in r18,0x18
+ 1142 03c2 0197      		sbiw r24,1
+ 1143 03c4 BA01      		movw r22,r20
+ 1144 03c6 00C0      		rjmp 2f
+ 1145               		1:
+ 1146 03c8 660F      		lsl r22
+ 1147 03ca 771F      		rol r23
+ 1148               		2:
+ 1149 03cc 8A95      		dec r24
+ 1150 03ce 02F4      		brpl 1b
+ 1151 03d0 CB01      		movw r24,r22
+ 1152 03d2 8095      		com r24
+ 1153 03d4 8223      		and r24,r18
+ 1154 03d6 88BB      		out 0x18,r24
+ 298:ServoController.c **** 		tempServoHead=tempServoHead->node;
+ 1155               		.loc 1 298 0
+ 1156 03d8 E091 0000 		lds r30,tempServoHead
+ 1157 03dc F091 0000 		lds r31,tempServoHead+1
+ 1158 03e0 8481      		ldd r24,Z+4
+ 1159 03e2 9581      		ldd r25,Z+5
+ 1160 03e4 9093 0000 		sts tempServoHead+1,r25
+ 1161 03e8 8093 0000 		sts tempServoHead,r24
+ 299:ServoController.c **** 		count++;
+ 1162               		.loc 1 299 0
+ 1163 03ec 8091 0000 		lds r24,count
+ 1164 03f0 9091 0000 		lds r25,count+1
+ 1165 03f4 0196      		adiw r24,1
+ 1166 03f6 9093 0000 		sts count+1,r25
+ 1167 03fa 8093 0000 		sts count,r24
+ 1168 03fe 00C0      		rjmp .L62
+ 1169               	.L65:
+ 305:ServoController.c **** 	}
+ 306:ServoController.c **** 	if(count>7){
+ 1170               		.loc 1 306 0
+ 1171 0400 8091 0000 		lds r24,count
+ 1172 0404 9091 0000 		lds r25,count+1
+ 1173 0408 0897      		sbiw r24,8
+ 1174 040a 04F0      		brlt .L68
+ 307:ServoController.c **** 		clearbit(PORTB,((tempServoHead->number)-1));
+ 1175               		.loc 1 307 0
+ 1176 040c 48B3      		in r20,0x18
+ 1177 040e E091 0000 		lds r30,tempServoHead
+ 1178 0412 F091 0000 		lds r31,tempServoHead+1
+ 1179 0416 2281      		ldd r18,Z+2
+ 1180 0418 3381      		ldd r19,Z+3
+ 1181 041a 2150      		subi r18,1
+ 1182 041c 3109      		sbc r19,__zero_reg__
+ 1183 041e 81E0      		ldi r24,lo8(1)
+ 1184 0420 90E0      		ldi r25,0
+ 1185 0422 00C0      		rjmp 2f
+ 1186               		1:
+ 1187 0424 880F      		lsl r24
+ 1188               		2:
+ 1189 0426 2A95      		dec r18
+ 1190 0428 02F4      		brpl 1b
+ 1191 042a 8095      		com r24
+ 1192 042c 8423      		and r24,r20
+ 1193 042e 88BB      		out 0x18,r24
+ 308:ServoController.c **** 		ICR1=ICR1_TOP_VALUE-ICR1_BASE_VALUE-(tempServoHead->angle)*FACTOR;
+ 1194               		.loc 1 308 0
+ 1195 0430 E091 0000 		lds r30,tempServoHead
+ 1196 0434 F091 0000 		lds r31,tempServoHead+1
+ 1197 0438 6081      		ld r22,Z
+ 1198 043a 7181      		ldd r23,Z+1
+ 1199 043c 80E0      		ldi r24,0
+ 1200 043e 90E0      		ldi r25,0
+ 1201 0440 0E94 0000 		call __floatunsisf
+ 1202               	.LVL87:
+ 1203 0444 2FE8      		ldi r18,lo8(-113)
+ 1204 0446 32EC      		ldi r19,lo8(-62)
+ 1205 0448 41EB      		ldi r20,lo8(-79)
+ 1206 044a 51E4      		ldi r21,lo8(65)
+ 1207 044c 0E94 0000 		call __mulsf3
+ 1208               	.LVL88:
+ 1209 0450 9B01      		movw r18,r22
+ 1210 0452 AC01      		movw r20,r24
+ 1211 0454 60E0      		ldi r22,0
+ 1212 0456 70E3      		ldi r23,lo8(48)
+ 1213 0458 85E3      		ldi r24,lo8(53)
+ 1214 045a 95E4      		ldi r25,lo8(69)
+ 1215 045c 0E94 0000 		call __subsf3
+ 1216               	.LVL89:
+ 1217 0460 0E94 0000 		call __fixunssfsi
+ 1218               	.LVL90:
+ 1219 0464 77BD      		out 0x26+1,r23
+ 1220 0466 66BD      		out 0x26,r22
+ 309:ServoController.c **** 		tempServoHead=*servoSwitchListPtr;
+ 1221               		.loc 1 309 0
+ 1222 0468 E091 0000 		lds r30,servoSwitchListPtr
+ 1223 046c F091 0000 		lds r31,servoSwitchListPtr+1
+ 1224 0470 8081      		ld r24,Z
+ 1225 0472 9181      		ldd r25,Z+1
+ 1226 0474 9093 0000 		sts tempServoHead+1,r25
+ 1227 0478 8093 0000 		sts tempServoHead,r24
+ 310:ServoController.c **** 		count=-1;
+ 1228               		.loc 1 310 0
+ 1229 047c 8FEF      		ldi r24,lo8(-1)
+ 1230 047e 9FEF      		ldi r25,lo8(-1)
+ 1231 0480 9093 0000 		sts count+1,r25
+ 1232 0484 8093 0000 		sts count,r24
+ 1233               	.L68:
+ 311:ServoController.c **** //		testcounter++;
+ 312:ServoController.c **** //
+ 313:ServoController.c **** //		if(testcounter>200){
+ 314:ServoController.c **** //			SendList(*servoSwitchListPtr);
+ 315:ServoController.c **** //			testcounter=0;
+ 316:ServoController.c **** //		}
+ 317:ServoController.c **** 	
+ 318:ServoController.c **** 	}
+ 319:ServoController.c **** 	count++;
+ 1234               		.loc 1 319 0
+ 1235 0488 8091 0000 		lds r24,count
+ 1236 048c 9091 0000 		lds r25,count+1
+ 1237 0490 0196      		adiw r24,1
+ 1238 0492 9093 0000 		sts count+1,r25
+ 1239 0496 8093 0000 		sts count,r24
+ 1240               	/* epilogue start */
+ 320:ServoController.c **** 	//TCNT1=0;
+ 321:ServoController.c **** }
+ 1241               		.loc 1 321 0
+ 1242 049a FF91      		pop r31
+ 1243 049c EF91      		pop r30
+ 1244 049e DF91      		pop r29
+ 1245 04a0 CF91      		pop r28
+ 1246 04a2 BF91      		pop r27
+ 1247 04a4 AF91      		pop r26
+ 1248 04a6 9F91      		pop r25
+ 1249 04a8 8F91      		pop r24
+ 1250 04aa 7F91      		pop r23
+ 1251 04ac 6F91      		pop r22
+ 1252 04ae 5F91      		pop r21
+ 1253 04b0 4F91      		pop r20
+ 1254 04b2 3F91      		pop r19
+ 1255 04b4 2F91      		pop r18
+ 1256 04b6 0F90      		pop r0
+ 1257 04b8 0FBE      		out __SREG__,r0
+ 1258 04ba 0F90      		pop r0
+ 1259 04bc 1F90      		pop r1
+ 1260 04be 1895      		reti
+ 1261               		.cfi_endproc
+ 1262               	.LFE17:
+ 1264               	.global	__vector_13
+ 1266               	__vector_13:
+ 1267               	.LFB18:
+ 322:ServoController.c **** 
+ 323:ServoController.c **** ISR(USART_RXC_vect)
+ 324:ServoController.c **** {
+ 1268               		.loc 1 324 0
+ 1269               		.cfi_startproc
+ 1270 04c0 1F92      		push r1
+ 1271               	.LCFI46:
+ 1272               		.cfi_def_cfa_offset 3
+ 1273               		.cfi_offset 1, -2
+ 1274 04c2 0F92      		push r0
+ 1275               	.LCFI47:
+ 1276               		.cfi_def_cfa_offset 4
+ 1277               		.cfi_offset 0, -3
+ 1278 04c4 0FB6      		in r0,__SREG__
+ 1279 04c6 0F92      		push r0
+ 1280 04c8 1124      		clr __zero_reg__
+ 1281 04ca 8F93      		push r24
+ 1282               	.LCFI48:
+ 1283               		.cfi_def_cfa_offset 5
+ 1284               		.cfi_offset 24, -4
+ 1285 04cc 9F93      		push r25
+ 1286               	.LCFI49:
+ 1287               		.cfi_def_cfa_offset 6
+ 1288               		.cfi_offset 25, -5
+ 1289 04ce EF93      		push r30
+ 1290               	.LCFI50:
+ 1291               		.cfi_def_cfa_offset 7
+ 1292               		.cfi_offset 30, -6
+ 1293 04d0 FF93      		push r31
+ 1294               	.LCFI51:
+ 1295               		.cfi_def_cfa_offset 8
+ 1296               		.cfi_offset 31, -7
+ 1297               	/* prologue: Signal */
+ 1298               	/* frame size = 0 */
+ 1299               	/* stack size = 7 */
+ 1300               	.L__stack_usage = 7
+ 1301               	.L71:
+ 325:ServoController.c **** 	while(!(UCSRA &(1<<RXC)));							//For SAFETY Measure
+ 1302               		.loc 1 325 0 discriminator 1
+ 1303 04d2 5F9B      		sbis 0xb,7
+ 1304 04d4 00C0      		rjmp .L71
+ 326:ServoController.c **** 	*tempDataPtr=UDR;
+ 1305               		.loc 1 326 0
+ 1306 04d6 E091 0000 		lds r30,tempDataPtr
+ 1307 04da F091 0000 		lds r31,tempDataPtr+1
+ 1308 04de 8CB1      		in r24,0xc
+ 1309 04e0 8083      		st Z,r24
+ 327:ServoController.c **** 	tempDataPtr++;
+ 1310               		.loc 1 327 0
+ 1311 04e2 E091 0000 		lds r30,tempDataPtr
+ 1312 04e6 F091 0000 		lds r31,tempDataPtr+1
+ 1313 04ea CF01      		movw r24,r30
+ 1314 04ec 0196      		adiw r24,1
+ 1315 04ee 9093 0000 		sts tempDataPtr+1,r25
+ 1316 04f2 8093 0000 		sts tempDataPtr,r24
+ 328:ServoController.c **** 	if(*(tempDataPtr-1)==END_OF_SIGNAL){						//STOP CONDITION
+ 1317               		.loc 1 328 0
+ 1318 04f6 8081      		ld r24,Z
+ 1319 04f8 8D30      		cpi r24,lo8(13)
+ 1320 04fa 01F4      		brne .L69
+ 329:ServoController.c **** 		arrangeSignalFlag=1;							//Flag will activate the processing of received data//Arranging
+ 1321               		.loc 1 329 0
+ 1322 04fc 81E0      		ldi r24,lo8(1)
+ 1323 04fe 90E0      		ldi r25,0
+ 1324 0500 9093 0000 		sts arrangeSignalFlag+1,r25
+ 1325 0504 8093 0000 		sts arrangeSignalFlag,r24
+ 1326               	.L69:
+ 1327               	/* epilogue start */
+ 330:ServoController.c **** 	}
+ 331:ServoController.c **** }
+ 1328               		.loc 1 331 0
+ 1329 0508 FF91      		pop r31
+ 1330 050a EF91      		pop r30
+ 1331 050c 9F91      		pop r25
+ 1332 050e 8F91      		pop r24
+ 1333 0510 0F90      		pop r0
+ 1334 0512 0FBE      		out __SREG__,r0
+ 1335 0514 0F90      		pop r0
+ 1336 0516 1F90      		pop r1
+ 1337 0518 1895      		reti
+ 1338               		.cfi_endproc
+ 1339               	.LFE18:
+ 1341               	.global	testcounter
+ 1342               		.section .bss
+ 1345               	testcounter:
+ 1346 0000 0000      		.zero	2
+ 1347               	.global	arrangeSignalFlag
+ 1350               	arrangeSignalFlag:
+ 1351 0002 0000      		.zero	2
+ 1352               	.global	baudRate
+ 1353               		.data
+ 1356               	baudRate:
+ 1357 0000 6700      		.word	103
+ 1358               		.comm	tempDataPtr,2,1
+ 1359               	.global	tempData
+ 1360               		.section .bss
+ 1363               	tempData:
+ 1364 0004 0000 0000 		.zero	6
+ 1364      0000 
+ 1365               	.global	count
+ 1368               	count:
+ 1369 000a 0000      		.zero	2
+ 1370               	.global	servoStartAngle
+ 1371               		.data
+ 1374               	servoStartAngle:
+ 1375 0002 1400      		.word	20
+ 1376 0004 1E00      		.word	30
+ 1377 0006 2800      		.word	40
+ 1378 0008 3200      		.word	50
+ 1379 000a 3C00      		.word	60
+ 1380 000c 4600      		.word	70
+ 1381 000e 5000      		.word	80
+ 1382 0010 5A00      		.word	90
+ 1383               		.comm	servoSwitchListPtr,2,1
+ 1384               		.comm	servoSwitchPtr,2,1
+ 1385               		.comm	servoSwitchPtrDup,2,1
+ 1386               		.comm	servoSwitchDup,2,1
+ 1387               		.comm	servoSwitch,2,1
+ 1388               		.comm	tempServoHead,2,1
+ 1389               		.text
+ 1390               	.Letext0:
+ 1391               		.file 3 "/usr/lib/avr/include/stdint.h"
+ 1392               		.file 4 "/usr/lib/gcc/avr/4.8.2/include/stddef.h"
+ 1393               		.file 5 "/usr/lib/avr/include/stdlib.h"
+DEFINED SYMBOLS
+                            *ABS*:0000000000000000 ServoController.c
+     /tmp/ccgKupJj.s:2      *ABS*:000000000000003e __SP_H__
+     /tmp/ccgKupJj.s:3      *ABS*:000000000000003d __SP_L__
+     /tmp/ccgKupJj.s:4      *ABS*:000000000000003f __SREG__
+     /tmp/ccgKupJj.s:5      *ABS*:0000000000000000 __tmp_reg__
+     /tmp/ccgKupJj.s:6      *ABS*:0000000000000001 __zero_reg__
+     /tmp/ccgKupJj.s:12     .text:0000000000000000 CreateList
+     /tmp/ccgKupJj.s:1374   .data:0000000000000002 servoStartAngle
+     /tmp/ccgKupJj.s:138    .text:0000000000000076 SendInteger
+     /tmp/ccgKupJj.s:172    .text:000000000000008c ArrangeAngle
+                            *COM*:0000000000000002 servoSwitchPtr
+                            *COM*:0000000000000002 servoSwitchPtrDup
+     /tmp/ccgKupJj.s:448    .text:00000000000001c2 StringToInt
+     /tmp/ccgKupJj.s:495    .text:00000000000001e6 PrepareAddToList
+     /tmp/ccgKupJj.s:584    .text:0000000000000250 SendList
+     /tmp/ccgKupJj.s:656    .text:000000000000028c USARTInit
+     /tmp/ccgKupJj.s:1356   .data:0000000000000000 baudRate
+     /tmp/ccgKupJj.s:689    .text:00000000000002aa TimerInit
+     /tmp/ccgKupJj.s:711    .text:00000000000002b8 ServoPortInit
+     /tmp/ccgKupJj.s:731    .text.startup:0000000000000000 main
+                            *COM*:0000000000000002 servoSwitchListPtr
+                            *COM*:0000000000000002 tempServoHead
+                            *COM*:0000000000000002 servoSwitch
+                            *COM*:0000000000000002 servoSwitchDup
+     /tmp/ccgKupJj.s:1363   .bss:0000000000000004 tempData
+                            *COM*:0000000000000002 tempDataPtr
+     /tmp/ccgKupJj.s:1350   .bss:0000000000000002 arrangeSignalFlag
+     /tmp/ccgKupJj.s:951    .text:00000000000002c0 __vector_6
+     /tmp/ccgKupJj.s:1368   .bss:000000000000000a count
+     /tmp/ccgKupJj.s:1266   .text:00000000000004c0 __vector_13
+     /tmp/ccgKupJj.s:1345   .bss:0000000000000000 testcounter
+
+UNDEFINED SYMBOLS
+malloc
+__floatunsisf
+__mulsf3
+__addsf3
+__fixunssfsi
+__subsf3
+__do_copy_data
+__do_clear_bss
