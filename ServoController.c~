@@ -51,15 +51,15 @@ servoList *servoHead;					//To store the head pointer
 servoList *tempServoHead;
 
 servoList *servoSwitch;
+servoList *servoSwitchDup;
+servoList **servoSwitchPtrDup;
 servoList **servoSwitchPtr;
 
-servoList *servoSwitchHead;
-servoList **servoSwitchHeadPtr;
-
+servoList **servoSwitchListPtr;
 uint16_t servoStartAngle[8]={25,50,75,100,125,150,160,179};
 
 int flag1=1;
-int count=0;									//Counter for servo timer ISR
+int count=0;										//Counter for servo timer ISR
 
 char tempData[6]={0,0,0,0,0,0};
 char *tempDataPtr;
@@ -67,10 +67,10 @@ uint16_t baudRate=103;								//=((F_CPU/(16*BAUDRATE))-1);
 int arrangeSignalFlag=0;
 
 //*****************************************************************************************************//
-//	  									  FUNCTION PROTOTYPES	   									   //
+//	  				FUNCTION PROTOTYPES	   		         	       //
 //*****************************************************************************************************//
 void USARTInit();
-servoList* ArrangeAngle(servoList *servoAngle, servoList *servoNodeHead);
+servoList* ArrangeAngle(servoList *servoAngle, servoList *servoNodeHead,int num);
 servoList* CreateList();
 void PrepareAddToList(char *start);
 uint16_t StringToInt(char *dataStart);
@@ -80,7 +80,7 @@ void ServoPortInit();
 void TimerInit();
 
 //*****************************************************************************************************//
-//	      									  FUNCTIONS					 	   				       //
+//	      					FUNCTIONS					       //
 //*****************************************************************************************************//
 
 servoList* CreateList()
@@ -104,7 +104,7 @@ servoList* CreateList()
 	return first;
 }
 
-servoList* ArrangeAngle(servoList *servoAngle,servoList *nodeHead)
+servoList* ArrangeAngle(servoList *servoAngle,servoList *nodeHead,int num)
 {
 	if(servoAngle->angle<=180 && servoAngle->number<=8){
 		servoList *servoNode;
@@ -115,7 +115,11 @@ servoList* ArrangeAngle(servoList *servoAngle,servoList *nodeHead)
 		int flagNumber=0;
 		if(servoAngle->number == nodeHead->number){
 //Check the difference between *servoSwitchPtr=servoNodeHead and servoSwitchPtr=&servoNodeHead;
+//It does not work with servoSwitchPtr=&nodeHead;
+		if(num==1)
 			*servoSwitchPtr=nodeHead;
+		else
+			*servoSwitchPtrDup=nodeHead;
 			nodeHead=servoNode->node;
 			flagNumber=1;
 		}
@@ -133,7 +137,10 @@ servoList* ArrangeAngle(servoList *servoAngle,servoList *nodeHead)
 				flagAngle=1;
 			}
 			if((servoAngle->number==servoNode->number)&& flagNumber!=1){
-				*servoSwitchPtr=servoNode;
+				if(num==1)
+					*servoSwitchPtr=servoNode;
+				else
+					*servoSwitchPtrDup=servoNode;
 				servoPreviousNode->node=servoNode->node;
 				flagNumber=1;
 			}
@@ -155,6 +162,8 @@ void PrepareAddToList(char *start)
 {
 	(*servoSwitchPtr)->number=(*start-48);
 	(*servoSwitchPtr)->angle=StringToInt(start+1);
+	(*servoSwitchPtrDup)->number=(*start-48);
+	(*servoSwitchPtrDup)->angle=StringToInt(start+1);
 }
 
 void SendInteger(uint16_t num)
@@ -190,18 +199,18 @@ servoList* SendList(servoList* head)
 int main(void)
 {
 	tempDataPtr=tempData;
-	servoList *servoNodeHead_a,*servoNodeHead_b;
-
-	servoList *tempServoSwitch;
-
-	servoNodeHead_a=CreateList();
-	servoNodeHead_b=CreateList();
-	servoSwitchHeadPtr=&servoNodeHead_a;
-
-	servoHead=tempServoHead=servoNodeHead;
+	servoList *servoNodeHead;
+	servoList *servoNodeHeadDup;
+	servoNodeHead=CreateList();
+	servoNodeHeadDup=CreateList();
+	servoSwitchListPtr=&servoNodeHead;
+	//servoHead=tempServoHead=servoNodeHead;
+	tempServoHead=*servoSwitchListPtr;
 	servoSwitch=(servoList*)malloc(sizeof(servoList));
-	servoSwitchPtr=&servoSwitch;			//Try to eliminate the effect of **pointer usage
-
+	servoSwitchDup=(servoList*)malloc(sizeof(servoList));
+	servoSwitchPtr=&servoSwitch;
+	servoSwitchPtrDup=&servoSwitchDup;
+	
 	clearbit(UCSRA,RXC);
 	USARTInit();
 	ServoPortInit();
@@ -209,32 +218,45 @@ int main(void)
 	TCNT1=0;
 	sei();
 	while(1){
-			//Without Delay the below loop is not executing
+			//Without Delay the below loop is not executing.
+			_delay_us(1); 
 			if(arrangeSignalFlag==1){
-			PrepareAddToList(tempData);
-
-			tempServoSwitch=*servoSwitchPtr;
-
-			//servoNodeHead=ArrangeAngle(*servoSwitchPtr,servoNodeHead);
-			if(servoSwitchHeadPtr==&servoNodeHead_a){
-				servoNodeHead_b=ArrangeAngle(*servoSwitchPtr,servoNodeHead_b);
-				servoSwitchHeadPtr=&servoNodeHead_b;
-				servoNodeHead_a=ArrangeAngle(tempServoSwitch,servoNodeHead_a);
-			}
-			else{
-				servoNodeHead_a=ArrangeAngle(*servoSwitchPtr,servoNodeHead_a);
-				servoSwitchHeadPtr=&servoNodeHead_a;
-				servoNodeHead_b=ArrangeAngle(tempServoSwitch,servoNodeHead_b);
-			}	
-			servoHead=servoNodeHead;	//
-			//SendList(servoNodeHead);
-			tempDataPtr=tempData;
-			arrangeSignalFlag=0;
-			count=0;
+				PrepareAddToList(tempData);
+				/*
+				SendList(servoNodeHeadDup);
+				SendInteger((*servoSwitchPtrDup)->number);
+				SendInteger((*servoSwitchPtrDup)->angle);
+				servoNodeHeadDup=ArrangeAngle(servoSwitchDup,servoNodeHeadDup,0);
+				SendList(servoNodeHeadDup);
+				SendInteger((*servoSwitchPtrDup)->number);
+				SendInteger((*servoSwitchPtrDup)->angle);
+				//SendList(servoNodeHead);
+				SendList(servoNodeHead);
+				SendInteger((*servoSwitchPtr)->number);
+				SendInteger((*servoSwitchPtr)->angle);
+				servoNodeHead=ArrangeAngle(servoSwitch,servoNodeHead,1);
+				SendList(servoNodeHead);
+				SendInteger((*servoSwitchPtr)->number);
+				SendInteger((*servoSwitchPtr)->angle);
+				*/
+				if(servoSwitchListPtr==&servoNodeHead){
+					servoNodeHeadDup=ArrangeAngle(*servoSwitchPtrDup,servoNodeHeadDup,0);
+					servoSwitchListPtr=&servoNodeHeadDup;
+					servoNodeHead=ArrangeAngle(*servoSwitchPtr,servoNodeHead,1);
+				}
+				else{
+					servoNodeHead=ArrangeAngle(*servoSwitchPtr,servoNodeHead,1);
+					servoSwitchListPtr=&servoNodeHead;
+					servoNodeHeadDup=ArrangeAngle(*servoSwitchPtrDup,servoNodeHeadDup,0);
+				}
+				tempDataPtr=tempData;
+				arrangeSignalFlag=0;
+				count=0;
 			}
 	}
 return 0;
 }
+
 
 void USARTInit()
 {
@@ -243,7 +265,7 @@ void USARTInit()
 	UBRRL = baudRate;
 	UBRRH &=~(1<<URSEL);
 	UBRRH = (baudRate<<8);
-	//clearbit(UCSRA,RXC);							//RXC bit needs to set to zero before enabling interrupt
+	//clearbit(UCSRA,RXC);									//RXC bit needs to set to zero before enabling interrupt
 }
 
 void TimerInit()
@@ -260,40 +282,42 @@ void ServoPortInit()
 }
 
 //*****************************************************************************************************//
-//	      									INTERRUPTS  								       	       //
+//	      				INTERRUPTS					       	       //
 //*****************************************************************************************************//
 ISR(TIMER1_CAPT_vect)
 {
 	if(count==0){
+		//tempServoHead=servoHead;
 		PORTB=0xff;
 		ICR1=ICR1_BASE_VALUE+(tempServoHead->angle)*FACTOR;			//struct 0 angle
 	}
-	clearbit(PORTB,tempServoHead->number);
-	while((tempServoHead->number==tempServoHead->node->number) && count <=7){
-		clearbit(PORTB,tempServoHead->number);
+	while(((tempServoHead->number==tempServoHead->node->number)&&count<=7)&&count>=1){
+		clearbit(PORTB,((tempServoHead->number)-1));
 		tempServoHead=tempServoHead->node;
-		count++;	
+		count++;
 	}
-	if((1<=count)&&(count<=7)){								//angle [i-1]
+	if((1<=count)&&(count<=7)){
+		clearbit(PORTB,	((tempServoHead->number)-1));									
 		ICR1=(tempServoHead->node->angle-tempServoHead->angle)*FACTOR;
 		tempServoHead=tempServoHead->node;
+		//Introduce a case for Zero Condition Angle example 2 or more than 2 consecutive angle can have same value. so the difference between the time will be apporximately zero.
 	}
 	if(count>7){
+		clearbit(PORTB,((tempServoHead->number)-1));
 		ICR1=ICR1_TOP_VALUE-ICR1_BASE_VALUE-(tempServoHead->angle)*FACTOR;
-		tempServoHead=*servoSwitchHeadPtr;
+		tempServoHead=*servoSwitchListPtr;
 		count=-1;
 	}
-	while(
 	count++;
 	TCNT1=0;
 }
 
 ISR(USART_RXC_vect)
 {
-	while(!(UCSRA &(1<<RXC)));	//For SAFETY Measure
+	while(!(UCSRA &(1<<RXC)));							//For SAFETY Measure
 	*tempDataPtr=UDR;
 	tempDataPtr++;
-	if(*(tempDataPtr-1)==END_OF_SIGNAL){	//STOP CONDITION
-		arrangeSignalFlag=1;	//Flag will activate the processing of received data//Arranging
+	if(*(tempDataPtr-1)==END_OF_SIGNAL){						//STOP CONDITION
+		arrangeSignalFlag=1;							//Flag will activate the processing of received data//Arranging
 	}
 }
