@@ -8,26 +8,26 @@
 //						DEFINES						       //
 //*****************************************************************************************************//
 #define F_CPU 				16000000UL
-#define setbit(x,y) 		x |=(1<<y)
-#define clearbit(x,y)  		x &=~(1<<y)
-#define togglebit(x,y) 		x ^=(1<<y)
+#define setbit(x,y) 			x |=(1<<y)
+#define clearbit(x,y)  			x &=~(1<<y)
+#define togglebit(x,y) 			x ^=(1<<y)
 #define BAUDRATE			9600
 #define UBRR_VAL			103
-#define END_OF_SIGNAL		13		//ENTER KEY
+#define END_OF_SIGNAL			13		//ENTER KEY
 
 #define ICR_VAL 			1100
-#define SERVO_NUMBER		8
-#define SERVO_MIN_ANGLE 	0
+#define SERVO_NUM_MAX			8
+#define SERVO_MIN_ANGLE 		0
 
-#define SERVO_MAX_ANGLE 	180
-#define ICR1_BASE_VALUE 	1100	//it is base of minimun high time of pulse typically it is 1.1 ms
-#define ICR1_TOP_VALUE		3999	//20 ms PULSE i.e. 50Hz frequency
+#define SERVO_MAX_ANGLE 		180
+#define ICR1_BASE_VALUE 		1100	//it is base of minimun high time of pulse typically it is 1.1 ms
+#define ICR1_TOP_VALUE			3999	//20 ms PULSE i.e. 50Hz frequency
 #define FACTOR 				22.22	//It is evaluated as 4000/180 degree
 
 //#define ANGLE_SCALE_FACTOR 	22.22	//It is evaluated as 4000/180 degree => 22.222222
 
 //*****************************************************************************************************//
-//										 INCLUDED LIBRARRY		       							       //
+//	        			 INCLUDED LIBRARRY					       //
 //*****************************************************************************************************//
 #include <avr/io.h>
 #include <avr/interrupt.h>
@@ -38,7 +38,7 @@
 
 
 //*****************************************************************************************************//
-//	   										GLOBAL VARIBLES										       //
+//	   				    GLOBAL VARIBLES					       //
 //*****************************************************************************************************//
 struct structServo{
 	uint16_t angle;
@@ -56,7 +56,7 @@ servoList **servoSwitchPtrDup;
 servoList **servoSwitchPtr;
 
 servoList **servoSwitchListPtr;
-uint16_t servoStartAngle[8]={25,50,75,100,125,150,160,179};
+uint16_t servoStartAngle[8]={1200,1600,2000,2400,2800,3200,3500,3800};
 
 int flag1=1;
 int count=0;										//Counter for servo timer ISR
@@ -106,7 +106,7 @@ servoList* CreateList()
 
 servoList* ArrangeAngle(servoList *servoAngle,servoList *nodeHead,int num)
 {
-	if(servoAngle->angle<=180 && servoAngle->number<=8){
+	if(servoAngle->angle<=ICR1_TOP_VALUE && servoAngle->number<=8){
 		servoList *servoNode;
 		servoList *servoPreviousNode;
 		servoNode = nodeHead;
@@ -151,9 +151,11 @@ servoList* ArrangeAngle(servoList *servoAngle,servoList *nodeHead,int num)
 			servoPreviousNode->node=servoAngle;
 			servoAngle->node=NULL;
 		}
+//SendInteger(1);
 		return nodeHead;
 	}
 	else{
+SendList(*servoSwitchListPtr);
 		return nodeHead;
 	}		
 }
@@ -218,6 +220,7 @@ int main(void)
 	TimerInit();
 	TCNT1=0;
 	sei();
+
 	while(1){
 			//Without Delay the below loop is not executing.
 			_delay_us(1); 
@@ -261,12 +264,12 @@ return 0;
 
 void USARTInit()
 {
-	UCSRB |=(1<<RXEN)|(1<<TXEN)|(1<<RXCIE);					//Enabling the Receiver and Receiver Interrupt
+	UCSRB |=(1<<RXEN)|(1<<TXEN)|(1<<RXCIE);				//Enabling the Receiver and Receiver Interrupt
 	UCSRC |=(1<<URSEL)|(1<<UCSZ1)|(1<<UCSZ0);
 	UBRRL = baudRate;
 	UBRRH &=~(1<<URSEL);
 	UBRRH = (baudRate<<8);
-	//clearbit(UCSRA,RXC);									//RXC bit needs to set to zero before enabling interrupt
+	clearbit(UCSRA,RXC);						//RXC bit needs to set to zero before enabling interrupt
 }
 
 void TimerInit()
@@ -285,27 +288,31 @@ void ServoPortInit()
 //*****************************************************************************************************//
 //	      				INTERRUPTS					       	       //
 //*****************************************************************************************************//
+
+//I need to set ICR1=0; Initially
 ISR(TIMER1_CAPT_vect)
 {
 	if(count==0){
-		//tempServoHead=servoHead;
 		PORTB=0xff;
-		ICR1=ICR1_BASE_VALUE+(tempServoHead->angle)*FACTOR;			//struct 0 angle
+		ICR1=ICR1_BASE_VALUE+(tempServoHead->angle);//*FACTOR;			
 	}
-	while(((tempServoHead->number==tempServoHead->node->number)&&count<=7)&&count>=1){
+	while(((tempServoHead->angle==tempServoHead->node->angle)&&count<=7)&&count>=1){
 		clearbit(PORTB,((tempServoHead->number)-1));
 		tempServoHead=tempServoHead->node;
 		count++;
 	}
-	if((1<=count)&&(count<=7)){
-		clearbit(PORTB,	((tempServoHead->number)-1));									
-		ICR1=(tempServoHead->node->angle-tempServoHead->angle)*FACTOR;
-		tempServoHead=tempServoHead->node;
-		//Introduce a case for Zero Condition Angle example 2 or more than 2 consecutive angle can have same value. so the difference between the time will be apporximately zero.
+	if((1<=count)&&(count<=(SERVO_NUM_MAX-1))){
+		clearbit(PORTB,	((tempServoHead->number)-1));
+		if(tempServoHead->node!=NULL){								
+			ICR1=(tempServoHead->node->angle-tempServoHead->angle);//*FACTOR;
+			tempServoHead=tempServoHead->node;
+		}
+		else
+			count++;
 	}
-	if(count>7){
-		clearbit(PORTB,((tempServoHead->number)-1));
-		ICR1=ICR1_TOP_VALUE-ICR1_BASE_VALUE-(tempServoHead->angle)*FACTOR;
+	if(count>(SERVO_NUM_MAX-1)){
+		//clearbit(PORTB,((tempServoHead->number)-1));
+		ICR1=ICR1_TOP_VALUE-ICR1_BASE_VALUE-(tempServoHead->angle);//*FACTOR;
 		tempServoHead=*servoSwitchListPtr;
 		count=-1;
 	}
@@ -315,7 +322,7 @@ ISR(TIMER1_CAPT_vect)
 
 ISR(USART_RXC_vect)
 {
-	while(!(UCSRA &(1<<RXC)));							//For SAFETY Measure
+//	while(!(UCSRA &(1<<RXC)));							//For SAFETY Measure
 	*tempDataPtr=UDR;
 	tempDataPtr++;
 	if(*(tempDataPtr-1)==END_OF_SIGNAL){						//STOP CONDITION
